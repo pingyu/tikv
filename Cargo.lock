@@ -483,6 +483,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "926013f2860c46252efceabb19f4a6b308197505082c609025aa6706c011d427"
 
 [[package]]
+name = "causal_ts"
+version = "0.0.1"
+dependencies = [
+ "futures 0.3.8",
+ "pd_client",
+ "slog",
+ "slog-global",
+ "test_raftstore",
+ "test_util",
+ "thiserror",
+ "tikv_util",
+ "txn_types",
+]
+
+[[package]]
 name = "cc"
 version = "1.0.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"

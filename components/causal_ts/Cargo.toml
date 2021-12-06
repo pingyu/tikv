@@ -1,0 +1,22 @@
+[package]
+name = "causal_ts"
+version = "0.0.1"
+edition = "2018"
+publish = false
+
+[dependencies]
+thiserror = "1.0"
+futures = "0.3"
+txn_types = { path = "../txn_types", default-features = false }
+pd_client = { path = "../pd_client", default-features = false }
+tikv_util = { path = "../tikv_util", default-features = false }
+slog = { version = "2.3", features = ["max_level_trace", "release_max_level_debug"] }
+slog-global = { version = "0.1", git = "https://github.com/breeswish/slog-global.git", rev = "d592f88e4dbba5eb439998463054f1a44fbf17b9" }
+
+[dev-dependencies]
+test_raftstore = { path = "../test_raftstore", default-features = false }
+test_util = { path = "../test_util", default-features = false }
+
+[[test]]
+name = "integrations"
+path = "tests/integrations/mod.rs"
