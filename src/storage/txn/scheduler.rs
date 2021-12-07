@@ -751,6 +751,7 @@ impl<E: Engine, L: LockManager> Scheduler<E, L> {
                         &ctx,
                         to_be_write,
                         engine_cb,
+                        None,
                         proposed_cb,
                         committed_cb,
                     ) {

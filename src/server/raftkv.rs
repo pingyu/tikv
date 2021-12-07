@@ -29,8 +29,8 @@ use txn_types::{Key, TimeStamp, TxnExtra, TxnExtraScheduler, Value};
 use super::metrics::*;
 use crate::storage::kv::{
     write_modifies, Callback, CbContext, Engine, Error as KvError, ErrorInner as KvErrorInner,
-    ExtCallback, Iterator as EngineIterator, Modify, SnapContext, Snapshot as EngineSnapshot,
-    WriteData,
+    ExtCallback, Iterator as EngineIterator, Modify, RequestCallback, SnapContext,
+    Snapshot as EngineSnapshot, WriteData,
 };
 use crate::storage::mvcc::{Error as MvccError, ErrorInner as MvccErrorInner};
 use crate::storage::{self, kv};
@@ -246,6 +246,7 @@ where
         reqs: Vec<Request>,
         txn_extra: TxnExtra,
         write_cb: Callback<CmdRes>,
+        pre_propose_cb: Option<RequestCallback>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
     ) -> Result<()> {
@@ -295,6 +296,7 @@ where
                         let (cb_ctx, res) = on_write_result(resp, len);
                         write_cb((cb_ctx, res.map_err(Error::into)));
                     }),
+                    pre_propose_cb,
                     proposed_cb,
                     committed_cb,
                 ),
@@ -379,7 +381,7 @@ where
         batch: WriteData,
         write_cb: Callback<()>,
     ) -> kv::Result<()> {
-        self.async_write_ext(ctx, batch, write_cb, None, None)
+        self.async_write_ext(ctx, batch, write_cb, None, None, None)
     }
 
     fn async_write_ext(
@@ -387,6 +389,7 @@ where
         ctx: &Context,
         batch: WriteData,
         write_cb: Callback<()>,
+        pre_propose_cb: Option<RequestCallback>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
     ) -> kv::Result<()> {
@@ -422,6 +425,7 @@ where
                     write_cb((cb_ctx, Err(e)))
                 }
             }),
+            pre_propose_cb,
             proposed_cb,
             committed_cb,
         )

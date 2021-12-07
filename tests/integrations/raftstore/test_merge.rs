@@ -875,6 +875,7 @@ fn test_request_snapshot_after_propose_merge() {
             req,
             Callback::write_ext(
                 Box::new(|_| {}),
+                None,
                 Some(Box::new(move || tx.send(()).unwrap())),
                 None,
             ),

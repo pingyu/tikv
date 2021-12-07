@@ -2272,7 +2272,7 @@ where
                 return false;
             }
             Ok(RequestPolicy::ReadIndex) => return self.read_index(ctx, req, err_resp, cb),
-            Ok(RequestPolicy::ProposeNormal) => self.propose_normal(ctx, req),
+            Ok(RequestPolicy::ProposeNormal) => self.propose_normal(ctx, req, Some(&mut cb)),
             Ok(RequestPolicy::ProposeTransferLeader) => {
                 return self.propose_transfer_leader(ctx, req, cb);
             }
@@ -2768,7 +2768,7 @@ where
         // update leader lease.
         if self.leader_lease.inspect(Some(renew_lease_time)) == LeaseState::Suspect {
             let req = RaftCmdRequest::default();
-            if let Ok(Either::Left(index)) = self.propose_normal(poll_ctx, req) {
+            if let Ok(Either::Left(index)) = self.propose_normal(poll_ctx, req, None) {
                 let p = Proposal {
                     is_conf_change: false,
                     index,
@@ -2902,7 +2902,11 @@ where
         &self,
         poll_ctx: &mut PollContext<EK, ER, T>,
         req: &mut RaftCmdRequest,
+        cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<ProposalContext> {
+        if let Some(cb) = cb {
+            cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
+        }
         poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
         let mut ctx = ProposalContext::empty();
 
@@ -2935,6 +2939,7 @@ where
         &mut self,
         poll_ctx: &mut PollContext<EK, ER, T>,
         mut req: RaftCmdRequest,
+        cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<Either<u64, u64>> {
         if self.pending_merge_state.is_some()
             && req.get_admin_request().get_cmd_type() != AdminCmdType::RollbackMerge
@@ -2965,7 +2970,7 @@ where
         }
 
         // TODO: validate request for unexpected changes.
-        let ctx = match self.pre_propose(poll_ctx, &mut req) {
+        let ctx = match self.pre_propose(poll_ctx, &mut req, cb) {
             Ok(ctx) => ctx,
             Err(e) => {
                 warn!(
@@ -4027,9 +4032,9 @@ mod tests {
                 continue;
             }
             let cb = if committed.contains(&(index, term)) {
-                Callback::write_ext(Box::new(|_| {}), None, Some(must_call()))
+                Callback::write_ext(Box::new(|_| {}), None, None, Some(must_call()))
             } else {
-                Callback::write_ext(Box::new(|_| {}), None, Some(must_not_call()))
+                Callback::write_ext(Box::new(|_| {}), None, None, Some(must_not_call()))
             };
             pq.push(Proposal {
                 index,

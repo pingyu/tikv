@@ -1,7 +1,7 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use txn_types::TimeStamp;
 use crate::errors::Result;
+use txn_types::TimeStamp;
 
 pub trait CausalTsProvider {
     /// Get a new ts

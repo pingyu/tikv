@@ -23,6 +23,7 @@ use engine_traits::{IterOptions, KvEngine as LocalEngine, MvccProperties, ReadOp
 use futures::prelude::*;
 use kvproto::errorpb::Error as ErrorHeader;
 use kvproto::kvrpcpb::{Context, ExtraOp as TxnExtraOp, KeyRange};
+use kvproto::raft_cmdpb::Request as RaftPbRequest;
 use txn_types::{Key, TimeStamp, TxnExtra, Value};
 
 pub use self::btree_engine::{BTreeEngine, BTreeEngineIterator, BTreeEngineSnapshot};
@@ -43,6 +44,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 5;
 
 pub type Callback<T> = Box<dyn FnOnce((CbContext, Result<T>)) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
+pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest]) + Send>;
 pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -150,6 +152,7 @@ pub trait Engine: Send + Clone + 'static {
 
     /// Writes data to the engine asynchronously with some extensions.
     ///
+    /// When the write request is just to be proposed, the `pre_propose_cb` is invoked.
     /// When the write request is proposed successfully, the `proposed_cb` is invoked.
     /// When the write request is finished, the `write_cb` is invoked.
     fn async_write_ext(
@@ -157,6 +160,7 @@ pub trait Engine: Send + Clone + 'static {
         ctx: &Context,
         batch: WriteData,
         write_cb: Callback<()>,
+        _pre_propose_cb: Option<RequestCallback>,
         _proposed_cb: Option<ExtCallback>,
         _committed_cb: Option<ExtCallback>,
     ) -> Result<()> {

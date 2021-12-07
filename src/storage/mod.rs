@@ -81,6 +81,7 @@ use futures::prelude::*;
 use kvproto::kvrpcpb::{
     CommandPri, Context, GetRequest, IsolationLevel, KeyRange, LockInfo, RawGetRequest,
 };
+use kvproto::raft_cmdpb::Request as RaftPbRequest;
 use raftstore::store::util::build_key_range;
 use rand::prelude::*;
 use std::{
@@ -1197,10 +1198,17 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             return Err(Error::from(ErrorInner::TTLNotEnabled));
         }
 
-        self.engine.async_write(
+        let pre_propose_cb = Box::new(|_reqs: &mut [RaftPbRequest]| {
+            warn!("pre_propose_cb");
+        });
+
+        self.engine.async_write_ext(
             &ctx,
             WriteData::from_modifies(vec![m]),
             Box::new(|(_, res): (_, kv::Result<_>)| callback(res.map_err(Error::from))),
+            Some(pre_propose_cb),
+            None,
+            None,
         )?;
         KV_COMMAND_COUNTER_VEC_STATIC.raw_put.inc();
         Ok(())

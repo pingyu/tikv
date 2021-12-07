@@ -8,7 +8,7 @@ use kvproto::kvrpcpb::{ExtraOp as TxnExtraOp, LeaderInfo};
 use kvproto::metapb;
 use kvproto::metapb::RegionEpoch;
 use kvproto::pdpb::CheckPolicy;
-use kvproto::raft_cmdpb::{RaftCmdRequest, RaftCmdResponse};
+use kvproto::raft_cmdpb::{RaftCmdRequest, RaftCmdResponse, Request as RaftPbRequest};
 use kvproto::raft_serverpb::RaftMessage;
 use kvproto::replication_modepb::ReplicationStatus;
 use raft::SnapshotStatus;
@@ -54,6 +54,7 @@ where
 pub type ReadCallback<S> = Box<dyn FnOnce(ReadResponse<S>) + Send>;
 pub type WriteCallback = Box<dyn FnOnce(WriteResponse) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
+pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest]) + Send>;
 
 /// Variants of callbacks for `Msg`.
 ///  - `Read`: a callback for read only requests including `StatusRequest`,
@@ -68,6 +69,9 @@ pub enum Callback<S: Snapshot> {
     /// Write callback.
     Write {
         cb: WriteCallback,
+        /// `pre_propose_cb` is ...
+        /// TODO: comments
+        pre_propose_cb: Option<RequestCallback>,
         /// `proposed_cb` is called after a request is proposed to the raft group successfully.
         /// It's used to notify the caller to move on early because it's very likely the request
         /// will be applied to the raftstore.
@@ -83,16 +87,18 @@ where
     S: Snapshot,
 {
     pub fn write(cb: WriteCallback) -> Self {
-        Self::write_ext(cb, None, None)
+        Self::write_ext(cb, None, None, None)
     }
 
     pub fn write_ext(
         cb: WriteCallback,
+        pre_propose_cb: Option<RequestCallback>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
     ) -> Self {
         Callback::Write {
             cb,
+            pre_propose_cb,
             proposed_cb,
             committed_cb,
         }
@@ -112,6 +118,14 @@ where
             Callback::Write { cb, .. } => {
                 let resp = WriteResponse { response: resp };
                 cb(resp);
+            }
+        }
+    }
+
+    pub fn invoke_pre_propose(&mut self, reqs: &mut [RaftPbRequest]) {
+        if let Callback::Write { pre_propose_cb, .. } = self {
+            if let Some(cb) = pre_propose_cb.take() {
+                cb(reqs)
             }
         }
     }

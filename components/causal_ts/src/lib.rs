@@ -1,5 +1,8 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+#[macro_use]
+extern crate tikv_util;
+
 mod causal_ts;
 pub use causal_ts::*;
 

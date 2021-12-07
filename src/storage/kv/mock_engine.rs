@@ -1,7 +1,7 @@
 // Copyright 2020 TiKV Project Authors. Licensed under Apache-2.0.
 
 use super::Result;
-use crate::storage::kv::{Callback, ExtCallback, Modify, SnapContext, WriteData};
+use crate::storage::kv::{Callback, ExtCallback, Modify, RequestCallback, SnapContext, WriteData};
 use crate::storage::{Engine, RocksEngine};
 use kvproto::kvrpcpb::Context;
 use std::collections::LinkedList;
@@ -156,7 +156,7 @@ impl Engine for MockEngine {
     }
 
     fn async_write(&self, ctx: &Context, batch: WriteData, write_cb: Callback<()>) -> Result<()> {
-        self.async_write_ext(ctx, batch, write_cb, None, None)
+        self.async_write_ext(ctx, batch, write_cb, None, None, None)
     }
 
     fn async_write_ext(
@@ -164,6 +164,7 @@ impl Engine for MockEngine {
         ctx: &Context,
         batch: WriteData,
         write_cb: Callback<()>,
+        pre_propose_cb: Option<RequestCallback>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
     ) -> Result<()> {
@@ -178,8 +179,14 @@ impl Engine for MockEngine {
         }
         let mut last_modifies = self.last_modifies.lock().unwrap();
         last_modifies.push(batch.modifies.clone());
-        self.base
-            .async_write_ext(ctx, batch, write_cb, proposed_cb, committed_cb)
+        self.base.async_write_ext(
+            ctx,
+            batch,
+            write_cb,
+            pre_propose_cb,
+            proposed_cb,
+            committed_cb,
+        )
     }
 }
 

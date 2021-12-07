@@ -46,7 +46,7 @@ use crate::store::fsm::{
 use crate::store::hibernate_state::{GroupState, HibernateState};
 use crate::store::local_metrics::RaftProposeMetrics;
 use crate::store::metrics::*;
-use crate::store::msg::{Callback, ExtCallback};
+use crate::store::msg::{Callback, ExtCallback, RequestCallback};
 use crate::store::peer::{ConsistencyState, Peer, StaleState};
 use crate::store::peer_storage::{ApplySnapResult, InvokeContext};
 use crate::store::transport::Transport;
@@ -368,6 +368,32 @@ where
         false
     }
 
+    fn build_pre_propose_cb(
+        cbs: &mut Vec<(Callback<E::Snapshot>, usize)>,
+    ) -> Option<RequestCallback> {
+        let mut intervals: Vec<(usize, usize)> = Vec::new();
+        let mut pre_propose_cbs: Vec<RequestCallback> = Vec::new();
+        for (i, (cb, req_num)) in cbs.iter_mut().enumerate() {
+            if let Callback::Write { pre_propose_cb, .. } = cb {
+                if let Some(cb) = pre_propose_cb.take() {
+                    pre_propose_cbs.push(cb);
+                    intervals.push((i, i + *req_num));
+                }
+            }
+        }
+
+        if pre_propose_cbs.is_empty() {
+            None
+        } else {
+            Some(Box::new(move |reqs| {
+                for (i, cb) in pre_propose_cbs.into_iter().enumerate() {
+                    let (start, end) = intervals[i];
+                    cb(&mut reqs[start..end]);
+                }
+            }))
+        }
+    }
+
     fn build(&mut self, metric: &mut RaftProposeMetrics) -> Option<RaftCommand<E::Snapshot>> {
         if let Some(req) = self.request.take() {
             self.batch_req_size = 0;
@@ -377,6 +403,7 @@ where
             }
             metric.batch += self.callbacks.len() - 1;
             let mut cbs = std::mem::take(&mut self.callbacks);
+            let pre_propose_cb = Self::build_pre_propose_cb(&mut cbs);
             let proposed_cbs: Vec<ExtCallback> = cbs
                 .iter_mut()
                 .filter_map(|cb| {
@@ -432,6 +459,7 @@ where
                         last_index = next_index;
                     }
                 }),
+                pre_propose_cb,
                 proposed_cb,
                 committed_cb,
             );
@@ -4266,6 +4294,7 @@ mod tests {
                 Box::new(move |_resp| {
                     flag.store(true, Ordering::Release);
                 }),
+                None,
                 proposed_cb,
                 committed_cb,
             );

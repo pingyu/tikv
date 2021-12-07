@@ -25,7 +25,7 @@ use tikv_util::worker::{Runnable, Scheduler, Worker};
 
 use super::{
     Callback, CbContext, Engine, Error, ErrorInner, ExtCallback, Iterator as EngineIterator,
-    Modify, Result, SnapContext, Snapshot, WriteData,
+    Modify, RequestCallback, Result, SnapContext, Snapshot, WriteData,
 };
 
 pub use engine_rocks::RocksSnapshot;
@@ -303,7 +303,7 @@ impl Engine for RocksEngine {
     }
 
     fn async_write(&self, ctx: &Context, batch: WriteData, cb: Callback<()>) -> Result<()> {
-        self.async_write_ext(ctx, batch, cb, None, None)
+        self.async_write_ext(ctx, batch, cb, None, None, None)
     }
 
     fn async_write_ext(
@@ -311,6 +311,7 @@ impl Engine for RocksEngine {
         _: &Context,
         batch: WriteData,
         cb: Callback<()>,
+        _pre_propose_cb: Option<RequestCallback>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
     ) -> Result<()> {
