@@ -82,6 +82,7 @@ use kvproto::kvrpcpb::{
     CommandPri, Context, GetRequest, IsolationLevel, KeyRange, LockInfo, RawGetRequest,
 };
 use kvproto::raft_cmdpb::Request as RaftPbRequest;
+use pd_client::PdClient;
 use raftstore::store::util::build_key_range;
 use rand::prelude::*;
 use std::{
@@ -89,6 +90,7 @@ use std::{
     iter,
     sync::{atomic, Arc},
 };
+use test_pd::TestPdClient;
 use tikv_util::time::{Instant, ThreadReadId};
 use txn_types::{Key, KvPair, Lock, Mutation, OldValues, TimeStamp, TsSet, Value};
 
@@ -136,6 +138,8 @@ pub struct Storage<E: Engine, L: LockManager> {
     max_key_size: usize,
 
     enable_ttl: bool,
+
+    pd_client: Arc<dyn PdClient>,
 }
 
 impl<E: Engine, L: LockManager> Clone for Storage<E, L> {
@@ -155,6 +159,7 @@ impl<E: Engine, L: LockManager> Clone for Storage<E, L> {
             max_key_size: self.max_key_size,
             concurrency_manager: self.concurrency_manager.clone(),
             enable_ttl: self.enable_ttl,
+            pd_client: self.pd_client.clone(),
         }
     }
 }
@@ -200,6 +205,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         lock_mgr: L,
         concurrency_manager: ConcurrencyManager,
         pipelined_pessimistic_lock: Arc<atomic::AtomicBool>,
+        pd_client: Arc<dyn PdClient>,
     ) -> Result<Self> {
         let sched = TxnScheduler::new(
             engine.clone(),
@@ -222,6 +228,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             refs: Arc::new(atomic::AtomicUsize::new(1)),
             max_key_size: config.max_key_size,
             enable_ttl: config.enable_ttl,
+            pd_client: pd_client.clone(),
         })
     }
 
@@ -1193,7 +1200,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         let mut m = Modify::Put(Self::rawkv_cf(&cf)?, Key::from_encoded(key), value);
         if self.enable_ttl {
             let expire_ts = convert_to_expire_ts(ttl);
-            m.with_ttl(expire_ts);
+            m.with_extended_fields(expire_ts, Some(0.into()));
         } else if ttl != 0 {
             return Err(Error::from(ErrorInner::TTLNotEnabled));
         }
@@ -1808,6 +1815,7 @@ impl<E: Engine, L: LockManager> TestStorageBuilder<E, L> {
             self.lock_mgr,
             ConcurrencyManager::new(1.into()),
             self.pipelined_pessimistic_lock,
+            Arc::new(TestPdClient::new(0, true)),
         )
     }
 }
@@ -4422,7 +4430,7 @@ mod tests {
             (b"c".to_vec(), b"cc".to_vec(), 0),
             (b"d".to_vec(), b"dd".to_vec(), 10),
             (b"e".to_vec(), b"ee".to_vec(), 20),
-            (b"f".to_vec(), b"ff".to_vec(), u64::MAX),
+            (b"f".to_vec(), b"ff".to_vec(), u64::MAX >> 2), // effective ttl = this value + current_ts.
         ];
 
         // Write key-value pairs one by one

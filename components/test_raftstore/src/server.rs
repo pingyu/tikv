@@ -38,6 +38,7 @@ use raftstore::store::{
 };
 use raftstore::Result;
 use security::SecurityManager;
+use test_pd::TestPdClient;
 use tikv::coprocessor;
 use tikv::import::{ImportSSTService, SSTImporter};
 use tikv::read_pool::ReadPool;
@@ -278,6 +279,7 @@ impl Simulator for ServerCluster {
             lock_mgr.clone(),
             concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
+            self.pd_client.clone(),
         )?;
         self.storages.insert(node_id, raft_engine);
 

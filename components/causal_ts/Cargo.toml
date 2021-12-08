@@ -15,6 +15,7 @@ slog-global = { version = "0.1", git = "https://github.com/breeswish/slog-global
 
 [dev-dependencies]
 test_raftstore = { path = "../test_raftstore", default-features = false }
+test_pd = { path = "../test_pd", default-features = false }
 test_util = { path = "../test_util", default-features = false }
 
 [[test]]

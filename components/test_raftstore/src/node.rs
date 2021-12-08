@@ -27,6 +27,7 @@ use raftstore::store::fsm::{RaftBatchSystem, RaftRouter};
 use raftstore::store::SnapManagerBuilder;
 use raftstore::store::*;
 use raftstore::Result;
+use test_pd::TestPdClient;
 use tikv::config::{ConfigController, Module, TiKvConfig};
 use tikv::import::SSTImporter;
 use tikv::server::raftkv::ReplicaReadLockChecker;

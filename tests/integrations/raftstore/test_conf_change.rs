@@ -17,6 +17,7 @@ use engine_traits::{Peekable, CF_RAFT};
 use pd_client::PdClient;
 use raftstore::store::util::is_learner;
 use raftstore::Result;
+use test_pd::TestPdClient;
 use test_raftstore::*;
 use tikv_util::config::ReadableDuration;
 use tikv_util::time::Instant;

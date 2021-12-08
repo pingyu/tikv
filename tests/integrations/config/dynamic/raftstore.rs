@@ -17,7 +17,7 @@ use tikv::import::SSTImporter;
 use concurrency_manager::ConcurrencyManager;
 use engine_traits::{Engines, ALL_CFS};
 use tempfile::TempDir;
-use test_raftstore::TestPdClient;
+use test_pd::TestPdClient;
 use tikv_util::config::VersionTrack;
 use tikv_util::worker::{dummy_scheduler, FutureWorker, Worker};
 

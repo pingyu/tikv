@@ -78,3 +78,4 @@ encryption_export = { path = "../encryption/export", default-features = false }
 tokio = { version = "0.2", features = ["rt-threaded"]}
 concurrency_manager = { path = "../concurrency_manager", default-features = false }
 fail = "0.4"
+test_pd = { path = "../test_pd", default-features = false }

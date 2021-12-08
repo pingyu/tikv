@@ -2,7 +2,7 @@ use std::sync::{atomic::Ordering, mpsc, Arc};
 use std::time::Duration;
 
 use security::SecurityManager;
-use test_raftstore::TestPdClient;
+use test_pd::TestPdClient;
 use tikv::config::*;
 use tikv::server::lock_manager::*;
 use tikv::server::resolve::{Callback, StoreAddrResolver};

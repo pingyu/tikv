@@ -40,6 +40,7 @@ pub fn create_raft_storage<S>(
     lock_mgr: LockManager,
     concurrency_manager: ConcurrencyManager,
     pipelined_pessimistic_lock: Arc<AtomicBool>,
+    pd_client: Arc<dyn PdClient>,
 ) -> Result<Storage<RaftKv<S>, LockManager>>
 where
     S: RaftStoreRouter<RocksEngine> + LocalReadRouter<RocksEngine> + 'static,
@@ -51,6 +52,7 @@ where
         lock_mgr,
         concurrency_manager,
         pipelined_pessimistic_lock,
+        pd_client.clone(),
     )?;
     Ok(store)
 }

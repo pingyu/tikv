@@ -574,6 +574,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             lock_mgr.clone(),
             self.concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
+            self.pd_client.clone(),
         )
         .unwrap_or_else(|e| fatal!("failed to create raft storage: {}", e));
 

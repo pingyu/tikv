@@ -17,7 +17,7 @@ use std::time::Duration;
 use std::{error, ptr, result};
 
 use engine_rocks::RocksTablePropertiesCollection;
-use engine_traits::util::append_expire_ts;
+use engine_traits::util::{append_expire_ts, append_extended_fields};
 use engine_traits::{CfName, CF_DEFAULT};
 use engine_traits::{IterOptions, KvEngine as LocalEngine, MvccProperties, ReadOptions};
 use futures::prelude::*;
@@ -90,6 +90,12 @@ impl Modify {
         if let Modify::Put(_, _, ref mut v) = self {
             append_expire_ts(v, expire_ts)
         };
+    }
+
+    pub fn with_extended_fields(&mut self, expire_ts: u64, causal_ts: Option<TimeStamp>) {
+        if let Modify::Put(_, _, ref mut v) = self {
+            append_extended_fields(v, expire_ts, causal_ts);
+        }
     }
 }
 

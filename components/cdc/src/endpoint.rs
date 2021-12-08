@@ -1476,8 +1476,8 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::sync::mpsc::{channel, sync_channel, Receiver, RecvTimeoutError, Sender};
     use tempfile::TempDir;
+    use test_pd::TestPdClient;
     use test_raftstore::MockRaftStoreRouter;
-    use test_raftstore::TestPdClient;
     use tikv::storage::kv::Engine;
     use tikv::storage::txn::tests::{must_acquire_pessimistic_lock, must_prewrite_put};
     use tikv::storage::TestEngineBuilder;

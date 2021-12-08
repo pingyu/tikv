@@ -14,6 +14,7 @@ use engine_traits::{Engines, Peekable, ALL_CFS, CF_RAFT};
 use raftstore::coprocessor::CoprocessorHost;
 use raftstore::store::fsm::store::StoreMeta;
 use raftstore::store::{bootstrap_store, fsm, AutoSplitController, SnapManager};
+use test_pd::{bootstrap_with_first_region, TestPdClient};
 use test_raftstore::*;
 use tikv::import::SSTImporter;
 use tikv::server::Node;

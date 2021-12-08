@@ -30,6 +30,7 @@ use raftstore::store::fsm::{create_raft_batch_system, RaftBatchSystem, RaftRoute
 use raftstore::store::transport::CasualRouter;
 use raftstore::store::*;
 use raftstore::{Error, Result};
+use test_pd::TestPdClient;
 use tikv::config::TiKvConfig;
 use tikv::server::Result as ServerResult;
 use tikv_util::thread_group::GroupProperties;

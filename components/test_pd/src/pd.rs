@@ -32,7 +32,7 @@ use tikv_util::timer::GLOBAL_TIMER_HANDLE;
 use tikv_util::{Either, HandyRwLock};
 use txn_types::TimeStamp;
 
-use super::*;
+use super::util::*;
 
 struct Store {
     store: metapb::Store,
