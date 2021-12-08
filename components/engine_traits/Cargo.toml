@@ -24,6 +24,7 @@ prost-codec = [
 ]
 
 [dependencies]
+byteorder = "1.2"
 error_code = { path = "../error_code", default-features = false }
 file_system = { path = "../file_system", default-features = false }
 log_wrappers = { path = "../log_wrappers" }

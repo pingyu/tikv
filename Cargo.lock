@@ -1346,6 +1346,7 @@ dependencies = [
 name = "engine_traits"
 version = "0.0.1"
 dependencies = [
+ "byteorder",
  "error_code",
  "file_system",
  "kvproto",
