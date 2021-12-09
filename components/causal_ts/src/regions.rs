@@ -3,12 +3,18 @@
 use collections::HashMap;
 use engine_rocks::RocksEngine;
 use engine_traits::{util::get_causal_ts, KvEngine};
-use raftstore::coprocessor::{BoxCmdObserver, Cmd, CmdObserver, Coprocessor, CoprocessorHost};
+use raft::StateRole;
+use raftstore::coprocessor::{
+    BoxCmdObserver, BoxRoleObserver, Cmd, CmdObserver, Coprocessor, CoprocessorHost,
+    ObserverContext, RoleObserver,
+};
 use raftstore::store::fsm::ObserveID;
 use txn_types::TimeStamp;
 
 use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
+
+use crate::CausalTsProvider;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegionCausalInfo {
@@ -56,20 +62,28 @@ impl RegionsCausalManager {
 pub struct CausalObserver {
     causal_manager: Arc<RegionsCausalManager>,
     regions_map: RefCell<RegionsMap>,
+    causal_ts: Arc<dyn CausalTsProvider>,
 }
 
 impl CausalObserver {
-    pub fn new(causal_manager: Arc<RegionsCausalManager>) -> CausalObserver {
+    pub fn new(
+        causal_manager: Arc<RegionsCausalManager>,
+        causal_ts: Arc<dyn CausalTsProvider>,
+    ) -> CausalObserver {
         CausalObserver {
             causal_manager,
             regions_map: RefCell::new(RegionsMap::default()),
+            causal_ts,
         }
     }
 
     pub fn register_to(&self, coprocessor_host: &mut CoprocessorHost<RocksEngine>) {
         coprocessor_host
             .registry
-            .register_global_cmd_observer(100, BoxCmdObserver::new(self.clone()));
+            .register_global_cmd_observer(1000, BoxCmdObserver::new(self.clone()));
+        coprocessor_host
+            .registry
+            .register_role_observer(1000, BoxRoleObserver::new(self.clone()));
     }
 }
 
@@ -105,19 +119,35 @@ impl<E: KvEngine> CmdObserver<E> for CausalObserver {
     }
 }
 
+impl RoleObserver for CausalObserver {
+    fn on_role_change(&self, ctx: &mut ObserverContext<'_>, role: StateRole) {
+        if role == StateRole::Leader {
+            let region_id = ctx.region().get_id();
+            let max_ts = self.causal_manager.max_ts(region_id);
+            self.causal_ts.advance(max_ts).unwrap();
+            warn!("CausalObserver on_role_change to leader"; "region" => region_id, "max_ts" => max_ts);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TsoSimpleProvider;
     use engine_rocks::RocksEngine;
     use engine_traits::util::append_extended_fields;
     use kvproto::raft_cmdpb::*;
     use std::convert::TryInto;
+    use test_pd::TestPdClient;
     use tikv::storage::kv::TestEngineBuilder;
 
     #[test]
     fn test_causal_observer() {
+        let pd_client = TestPdClient::new(0, true);
+        let causal_ts = Arc::new(TsoSimpleProvider::new(Arc::new(pd_client)));
         let manager = Arc::new(RegionsCausalManager::default());
-        let ob = CausalObserver::new(manager.clone());
+
+        let ob = CausalObserver::new(manager.clone(), causal_ts);
         let ob_id = ObserveID::new();
 
         let engine = TestEngineBuilder::new().build().unwrap().get_rocksdb();

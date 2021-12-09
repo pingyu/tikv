@@ -492,6 +492,7 @@ dependencies = [
  "futures 0.3.8",
  "kvproto",
  "pd_client",
+ "raft",
  "raftstore",
  "slog",
  "slog-global",

@@ -578,7 +578,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             lock_mgr.clone(),
             self.concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
-            causal_ts,
+            causal_ts.clone(),
         )
         .unwrap_or_else(|e| fatal!("failed to create raft storage: {}", e));
 
@@ -624,7 +624,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
         );
 
         // Register causal observer.
-        let causal_ob = causal_ts::CausalObserver::new(causal_manager);
+        let causal_ob = causal_ts::CausalObserver::new(causal_manager, causal_ts);
         causal_ob.register_to(self.coprocessor_host.as_mut().unwrap());
 
         let server_config = Arc::new(self.config.server.clone());

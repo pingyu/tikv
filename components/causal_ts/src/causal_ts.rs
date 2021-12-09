@@ -8,7 +8,8 @@ pub trait CausalTsProvider: Send + Sync {
     fn get_ts(&self) -> Result<TimeStamp>;
 
     /// Advance to not less than ts
-    fn advance(&self, _ts: TimeStamp) -> Result<()> {
+    fn advance(&self, ts: TimeStamp) -> Result<()> {
+        warn!("CausalTsProvider::advance()"; "ts" => ts);
         Ok(())
     }
 }

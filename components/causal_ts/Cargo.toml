@@ -16,6 +16,7 @@ collections = { path = "../collections" }
 engine_rocks = { path = "../engine_rocks", default-features = false }
 engine_traits = { path = "../engine_traits", default-features = false }
 raftstore = { path = "../raftstore", default-features = false }
+raft = { version = "0.6.0-alpha", default-features = false }
 
 [dev-dependencies]
 test_raftstore = { path = "../test_raftstore", default-features = false }
