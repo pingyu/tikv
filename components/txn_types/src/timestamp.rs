@@ -1,10 +1,12 @@
 // Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
 
+use chrono::{prelude::DateTime, Local};
 use collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct TimeStamp(u64);
 
 const TSO_PHYSICAL_SHIFT_BITS: u64 = 18;
@@ -30,6 +32,10 @@ impl TimeStamp {
     /// Extracts physical part of a timestamp, in milliseconds.
     pub fn physical(self) -> u64 {
         self.0 >> TSO_PHYSICAL_SHIFT_BITS
+    }
+
+    pub fn logical(self) -> u64 {
+        self.0 & ((0x1_u64 << TSO_PHYSICAL_SHIFT_BITS) - 1)
     }
 
     pub fn next(self) -> TimeStamp {
@@ -82,6 +88,20 @@ impl From<&u64> for TimeStamp {
 impl fmt::Display for TimeStamp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for TimeStamp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let d = UNIX_EPOCH + Duration::from_millis(self.physical());
+        let dt = DateTime::<Local>::from(d);
+        let ts_str = dt.format("%+").to_string();
+
+        f.debug_struct("TimeStamp")
+            .field("u64", &self.0)
+            .field("pc", &ts_str)
+            .field("lc", &self.logical())
+            .finish()
     }
 }
 

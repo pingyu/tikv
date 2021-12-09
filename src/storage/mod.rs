@@ -75,14 +75,14 @@ use crate::storage::{
     txn::{commands::TypedCommand, scheduler::Scheduler as TxnScheduler, Command},
     types::StorageCallbackType,
 };
+use causal_ts::{CausalTsProvider, TsoSimpleProvider};
 use concurrency_manager::ConcurrencyManager;
-use engine_traits::{CfName, ALL_CFS, CF_DEFAULT, DATA_CFS};
+use engine_traits::{util::emplace_causal_ts, CfName, ALL_CFS, CF_DEFAULT, DATA_CFS};
 use futures::prelude::*;
 use kvproto::kvrpcpb::{
     CommandPri, Context, GetRequest, IsolationLevel, KeyRange, LockInfo, RawGetRequest,
 };
 use kvproto::raft_cmdpb::Request as RaftPbRequest;
-use pd_client::PdClient;
 use raftstore::store::util::build_key_range;
 use rand::prelude::*;
 use std::{
@@ -139,7 +139,7 @@ pub struct Storage<E: Engine, L: LockManager> {
 
     enable_ttl: bool,
 
-    pd_client: Arc<dyn PdClient>,
+    causal_ts: Arc<dyn CausalTsProvider>,
 }
 
 impl<E: Engine, L: LockManager> Clone for Storage<E, L> {
@@ -159,7 +159,7 @@ impl<E: Engine, L: LockManager> Clone for Storage<E, L> {
             max_key_size: self.max_key_size,
             concurrency_manager: self.concurrency_manager.clone(),
             enable_ttl: self.enable_ttl,
-            pd_client: self.pd_client.clone(),
+            causal_ts: self.causal_ts.clone(),
         }
     }
 }
@@ -205,7 +205,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         lock_mgr: L,
         concurrency_manager: ConcurrencyManager,
         pipelined_pessimistic_lock: Arc<atomic::AtomicBool>,
-        pd_client: Arc<dyn PdClient>,
+        causal_ts: Arc<dyn CausalTsProvider>,
     ) -> Result<Self> {
         let sched = TxnScheduler::new(
             engine.clone(),
@@ -228,7 +228,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             refs: Arc::new(atomic::AtomicUsize::new(1)),
             max_key_size: config.max_key_size,
             enable_ttl: config.enable_ttl,
-            pd_client: pd_client.clone(),
+            causal_ts: causal_ts.clone(),
         })
     }
 
@@ -1205,8 +1205,20 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             return Err(Error::from(ErrorInner::TTLNotEnabled));
         }
 
-        let pre_propose_cb = Box::new(|_reqs: &mut [RaftPbRequest]| {
-            warn!("pre_propose_cb");
+        let causal_ts = self.causal_ts.clone();
+        let pre_propose_cb = Box::new(move |reqs: &mut [RaftPbRequest]| {
+            for req in reqs {
+                if req.has_put() {
+                    let ts = causal_ts.get_ts().unwrap(); // TODO: error handle
+                    emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
+                    warn!(
+                        "pre_prose_cb: ts: {}, key: {:x?}, value: {:x?}",
+                        ts,
+                        req.get_put().get_key(),
+                        req.get_put().get_value()
+                    );
+                }
+            }
         });
 
         self.engine.async_write_ext(
@@ -1808,6 +1820,9 @@ impl<E: Engine, L: LockManager> TestStorageBuilder<E, L> {
             self.engine.clone(),
         );
 
+        let pd_client = TestPdClient::new(0, true);
+        let causal_ts = TsoSimpleProvider::new(Arc::new(pd_client));
+
         Storage::from_engine(
             self.engine,
             &self.config,
@@ -1815,7 +1830,7 @@ impl<E: Engine, L: LockManager> TestStorageBuilder<E, L> {
             self.lock_mgr,
             ConcurrencyManager::new(1.into()),
             self.pipelined_pessimistic_lock,
-            Arc::new(TestPdClient::new(0, true)),
+            Arc::new(causal_ts),
         )
     }
 }

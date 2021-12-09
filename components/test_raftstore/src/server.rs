@@ -19,6 +19,7 @@ use tempfile::{Builder, TempDir};
 use tokio::runtime::Builder as TokioBuilder;
 
 use super::*;
+use causal_ts::TsoSimpleProvider;
 use collections::{HashMap, HashSet};
 use concurrency_manager::ConcurrencyManager;
 use encryption_export::DataKeyManager;
@@ -271,6 +272,8 @@ impl Simulator for ServerCluster {
             .start_observe_lock_apply(&mut coprocessor_host, concurrency_manager.clone())
             .unwrap();
 
+        let causal_ts = TsoSimpleProvider::new(self.pd_client.clone());
+
         let mut lock_mgr = LockManager::new(cfg.pessimistic_txn.pipelined);
         let store = create_raft_storage(
             engine,
@@ -279,7 +282,7 @@ impl Simulator for ServerCluster {
             lock_mgr.clone(),
             concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
-            self.pd_client.clone(),
+            Arc::new(causal_ts),
         )?;
         self.storages.insert(node_id, raft_engine);
 

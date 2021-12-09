@@ -19,14 +19,10 @@ impl TsoSimpleProvider {
 }
 
 impl CausalTsProvider for TsoSimpleProvider {
-    fn get_ts(&mut self) -> Result<TimeStamp> {
+    fn get_ts(&self) -> Result<TimeStamp> {
+        // TODO: async
         let ts = block_on(self.pd_client.get_tso())?;
-        warn!("TsoSimpleProvider::get_ts"; "ts" => ts,);
+        warn!("TsoSimpleProvider::get_ts"; "ts" => ?ts);
         Ok(ts)
-    }
-
-    fn advance(&mut self, _ts: TimeStamp) -> Result<()> {
-        // TODO
-        Ok(())
     }
 }

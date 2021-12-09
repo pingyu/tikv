@@ -3,10 +3,12 @@
 use crate::errors::Result;
 use txn_types::TimeStamp;
 
-pub trait CausalTsProvider {
+pub trait CausalTsProvider: Send + Sync {
     /// Get a new ts
-    fn get_ts(&mut self) -> Result<TimeStamp>;
+    fn get_ts(&self) -> Result<TimeStamp>;
 
     /// Advance to not less than ts
-    fn advance(&mut self, ts: TimeStamp) -> Result<()>;
+    fn advance(&self, _ts: TimeStamp) -> Result<()> {
+        Ok(())
+    }
 }

@@ -210,6 +210,7 @@ minitrace = { git = "https://github.com/pingcap-incubator/minitrace-rust.git", b
 yatp = { git = "https://github.com/tikv/yatp.git", branch = "master" }
 seahash = "4.1.0"
 test_pd = { path = "components/test_pd", default-features = false }
+causal_ts = { path = "components/causal_ts" }
 
 [dev-dependencies]
 panic_hook = { path = "components/panic_hook" }

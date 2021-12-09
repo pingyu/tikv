@@ -567,6 +567,9 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             storage_read_pools.handle()
         };
 
+        // Create CausalTsProvider
+        let causal_ts = Arc::new(causal_ts::TsoSimpleProvider::new(self.pd_client.clone()));
+
         let storage = create_raft_storage(
             engines.engine.clone(),
             &self.config.storage,
@@ -574,7 +577,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             lock_mgr.clone(),
             self.concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
-            self.pd_client.clone(),
+            causal_ts,
         )
         .unwrap_or_else(|e| fatal!("failed to create raft storage: {}", e));
 

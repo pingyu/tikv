@@ -11,6 +11,7 @@ use crate::read_pool::ReadPoolHandle;
 use crate::server::lock_manager::LockManager;
 use crate::server::Config as ServerConfig;
 use crate::storage::{config::Config as StorageConfig, Storage};
+use causal_ts::CausalTsProvider;
 use concurrency_manager::ConcurrencyManager;
 use engine_rocks::RocksEngine;
 use engine_traits::{Engines, Peekable, RaftEngine};
@@ -40,7 +41,7 @@ pub fn create_raft_storage<S>(
     lock_mgr: LockManager,
     concurrency_manager: ConcurrencyManager,
     pipelined_pessimistic_lock: Arc<AtomicBool>,
-    pd_client: Arc<dyn PdClient>,
+    causal_ts: Arc<dyn CausalTsProvider>,
 ) -> Result<Storage<RaftKv<S>, LockManager>>
 where
     S: RaftStoreRouter<RocksEngine> + LocalReadRouter<RocksEngine> + 'static,
@@ -52,7 +53,7 @@ where
         lock_mgr,
         concurrency_manager,
         pipelined_pessimistic_lock,
-        pd_client.clone(),
+        causal_ts.clone(),
     )?;
     Ok(store)
 }

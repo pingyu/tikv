@@ -7,7 +7,7 @@ use causal_ts::{CausalTsProvider, TsoSimpleProvider};
 fn test_tso_simple_provider() {
     let suite = TestSuite::new(1);
 
-    let mut provider = TsoSimpleProvider::new(suite.pd_cli.clone());
+    let provider = TsoSimpleProvider::new(suite.pd_cli.clone());
 
     let _ts = provider.get_ts().unwrap();
     // assert_eq!(ts, 0.into(), "ts: {:?}", ts);
