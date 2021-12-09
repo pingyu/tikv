@@ -93,8 +93,8 @@ impl fmt::Display for TimeStamp {
 
 impl fmt::Debug for TimeStamp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let d = UNIX_EPOCH + Duration::from_millis(self.physical());
-        let dt = DateTime::<Local>::from(d);
+        let st = UNIX_EPOCH + Duration::from_millis(self.physical());
+        let dt = DateTime::<Local>::from(st);
         let ts_str = dt.format("%+").to_string();
 
         f.debug_struct("TimeStamp")

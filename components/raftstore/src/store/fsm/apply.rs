@@ -429,11 +429,10 @@ where
         self.cbs.push(ApplyCallback::new(delegate.region.clone()));
         self.last_applied_index = delegate.apply_state.get_applied_index();
 
-        if let Some(observe_cmd) = &delegate.observe_cmd {
-            let region_id = delegate.region_id();
-            // TODO: skip this step when we do not need to observe cmds.
-            self.host.prepare_for_apply(observe_cmd.id, region_id);
-        }
+        let region_id = delegate.region_id();
+        // TODO: skip this step when we do not need to observe cmds.
+        self.host
+            .prepare_for_apply(delegate.observe_cmd.as_ref(), region_id);
     }
 
     /// Commits all changes have done for delegate. `persistent` indicates whether
@@ -1079,11 +1078,9 @@ where
         cmd_resp::bind_term(&mut resp, self.term);
         let cmd_cb = self.find_pending(index, term, is_conf_change_cmd(&cmd));
         let cmd = Cmd::new(index, cmd, resp);
-        if let Some(observe_cmd) = self.observe_cmd.as_ref() {
-            apply_ctx
-                .host
-                .on_apply_cmd(observe_cmd.id, self.region_id(), cmd.clone());
-        }
+        apply_ctx
+            .host
+            .on_apply_cmd(self.observe_cmd.as_ref(), self.region_id(), cmd.clone());
 
         apply_ctx.cbs.last_mut().unwrap().push(cmd_cb, cmd);
 
@@ -2848,11 +2845,15 @@ impl ObserveID {
     pub fn new() -> ObserveID {
         ObserveID(OBSERVE_ID_ALLOC.fetch_add(1, Ordering::SeqCst))
     }
+
+    pub fn zero() -> ObserveID {
+        ObserveID(0)
+    }
 }
 
-struct ObserveCmd {
+pub struct ObserveCmd {
     // TODO: Add flags to disable observing.
-    id: ObserveID,
+    pub id: ObserveID,
 }
 
 impl Debug for ObserveCmd {

@@ -567,8 +567,9 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             storage_read_pools.handle()
         };
 
-        // Create CausalTsProvider
+        // Create Causal TimeStamp objects.
         let causal_ts = Arc::new(causal_ts::TsoSimpleProvider::new(self.pd_client.clone()));
+        let causal_manager = Arc::new(causal_ts::RegionsCausalManager::default());
 
         let storage = create_raft_storage(
             engines.engine.clone(),
@@ -621,6 +622,10 @@ impl<ER: RaftEngine> TiKVServer<ER> {
             tikv::config::Module::CDC,
             Box::new(CdcConfigManager(cdc_worker.scheduler())),
         );
+
+        // Register causal observer.
+        let causal_ob = causal_ts::CausalObserver::new(causal_manager);
+        causal_ob.register_to(self.coprocessor_host.as_mut().unwrap());
 
         let server_config = Arc::new(self.config.server.clone());
 

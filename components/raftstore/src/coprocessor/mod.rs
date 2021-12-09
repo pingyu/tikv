@@ -35,7 +35,7 @@ pub use self::split_check::{
     TableCheckObserver,
 };
 
-use crate::store::fsm::ObserveID;
+use crate::store::fsm::{ObserveCmd, ObserveID};
 pub use crate::store::KeyEntry;
 
 /// Coprocessor is used to provide a convenient way to inject code to

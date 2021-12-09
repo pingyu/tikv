@@ -12,8 +12,8 @@ pub mod store;
 pub use self::apply::{
     create_apply_batch_system, Apply, ApplyBatchSystem, ApplyMetrics, ApplyRes, ApplyRouter,
     Builder as ApplyPollerBuilder, CatchUpLogs, ChangeObserver, ChangePeer, ExecResult,
-    GenSnapTask, Msg as ApplyTask, Notifier as ApplyNotifier, ObserveID, Proposal, Registration,
-    TaskRes as ApplyTaskRes,
+    GenSnapTask, Msg as ApplyTask, Notifier as ApplyNotifier, ObserveCmd, ObserveID, Proposal,
+    Registration, TaskRes as ApplyTaskRes,
 };
 pub use self::peer::{CollectedReady, DestroyPeerJob, PeerFsm};
 pub use self::store::{

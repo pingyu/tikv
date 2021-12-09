@@ -174,6 +174,7 @@ where
     cmd_observers: Vec<Entry<BoxCmdObserver<E>>>,
     read_index_observers: Vec<Entry<BoxReadIndexObserver>>,
     // TODO: add endpoint
+    global_cmd_observers: Vec<Entry<BoxCmdObserver<E>>>,
 }
 
 impl<E: KvEngine> Default for Registry<E> {
@@ -188,6 +189,7 @@ impl<E: KvEngine> Default for Registry<E> {
             region_change_observers: Default::default(),
             cmd_observers: Default::default(),
             read_index_observers: Default::default(),
+            global_cmd_observers: Default::default(),
         }
     }
 }
@@ -248,6 +250,10 @@ impl<E: KvEngine> Registry<E> {
 
     pub fn register_read_index_observer(&mut self, priority: u32, rio: BoxReadIndexObserver) {
         push!(priority, rio, self.read_index_observers);
+    }
+
+    pub fn register_global_cmd_observer(&mut self, priority: u32, rlo: BoxCmdObserver<E>) {
+        push!(priority, rlo, self.global_cmd_observers);
     }
 }
 
@@ -493,39 +499,61 @@ impl<E: KvEngine> CoprocessorHost<E> {
         );
     }
 
-    pub fn prepare_for_apply(&self, observe_id: ObserveID, region_id: u64) {
-        for cmd_ob in &self.registry.cmd_observers {
-            cmd_ob
-                .observer
+    pub fn prepare_for_apply(&self, observe_cmd: Option<&ObserveCmd>, region_id: u64) {
+        for ob in &self.registry.global_cmd_observers {
+            ob.observer
                 .inner()
-                .on_prepare_for_apply(observe_id, region_id);
+                .on_prepare_for_apply(ObserveID::zero(), region_id);
+        }
+
+        if let Some(observe_cmd) = observe_cmd {
+            let observe_id = observe_cmd.id;
+            for cmd_ob in &self.registry.cmd_observers {
+                cmd_ob
+                    .observer
+                    .inner()
+                    .on_prepare_for_apply(observe_id, region_id);
+            }
         }
     }
 
-    pub fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
-        assert!(
-            !self.registry.cmd_observers.is_empty(),
-            "CmdObserver is not registered"
-        );
-        for i in 0..self.registry.cmd_observers.len() - 1 {
+    pub fn on_apply_cmd(&self, observe_cmd: Option<&ObserveCmd>, region_id: u64, cmd: Cmd) {
+        for ob in &self.registry.global_cmd_observers {
+            ob.observer
+                .inner()
+                .on_apply_cmd(ObserveID::zero(), region_id, cmd.clone());
+        }
+
+        if let Some(observe_cmd) = observe_cmd {
+            let observe_id = observe_cmd.id;
+            assert!(
+                !self.registry.cmd_observers.is_empty(),
+                "CmdObserver is not registered"
+            );
+            for i in 0..self.registry.cmd_observers.len() - 1 {
+                self.registry
+                    .cmd_observers
+                    .get(i)
+                    .unwrap()
+                    .observer
+                    .inner()
+                    .on_apply_cmd(observe_id, region_id, cmd.clone())
+            }
             self.registry
                 .cmd_observers
-                .get(i)
+                .last()
                 .unwrap()
                 .observer
                 .inner()
-                .on_apply_cmd(observe_id, region_id, cmd.clone())
+                .on_apply_cmd(observe_id, region_id, cmd)
         }
-        self.registry
-            .cmd_observers
-            .last()
-            .unwrap()
-            .observer
-            .inner()
-            .on_apply_cmd(observe_id, region_id, cmd)
     }
 
     pub fn on_flush_apply(&self, engine: E) {
+        for ob in &self.registry.global_cmd_observers {
+            ob.observer.inner().on_flush_apply(engine.clone());
+        }
+
         if self.registry.cmd_observers.is_empty() {
             return;
         }
@@ -565,6 +593,9 @@ impl<E: KvEngine> CoprocessorHost<E> {
             entry.observer.inner().stop();
         }
         for entry in &self.registry.cmd_observers {
+            entry.observer.inner().stop();
+        }
+        for entry in &self.registry.global_cmd_observers {
             entry.observer.inner().stop();
         }
     }
@@ -754,10 +785,11 @@ mod tests {
         host.post_apply_sst_from_snapshot(&region, "default", "");
         assert_all!(&[&ob.called], &[55]);
         let observe_id = ObserveID::new();
-        host.prepare_for_apply(observe_id, 0);
+        let observe_cmd = ObserveCmd { id: observe_id };
+        host.prepare_for_apply(Some(&observe_cmd), 0);
         assert_all!(&[&ob.called], &[66]);
         host.on_apply_cmd(
-            observe_id,
+            Some(&observe_cmd),
             0,
             Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
         );
