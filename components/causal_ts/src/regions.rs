@@ -1,12 +1,14 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
+use crate::errors::Result;
 use collections::HashMap;
 use engine_rocks::RocksEngine;
+use engine_traits::CfName;
 use engine_traits::{util::get_causal_ts, KvEngine};
 use raft::StateRole;
 use raftstore::coprocessor::{
-    BoxCmdObserver, BoxRoleObserver, Cmd, CmdObserver, Coprocessor, CoprocessorHost,
-    ObserverContext, RoleObserver,
+    ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxRoleObserver, Cmd,
+    CmdObserver, Coprocessor, CoprocessorHost, ObserverContext, RoleObserver,
 };
 use raftstore::store::fsm::ObserveID;
 use txn_types::TimeStamp;
@@ -65,6 +67,8 @@ pub struct CausalObserver {
     causal_ts: Arc<dyn CausalTsProvider>,
 }
 
+const CAUSAL_OBSERVER_PRIORITY: u32 = 1000;
+
 impl CausalObserver {
     pub fn new(
         causal_manager: Arc<RegionsCausalManager>,
@@ -78,12 +82,17 @@ impl CausalObserver {
     }
 
     pub fn register_to(&self, coprocessor_host: &mut CoprocessorHost<RocksEngine>) {
+        coprocessor_host.registry.register_global_cmd_observer(
+            CAUSAL_OBSERVER_PRIORITY,
+            BoxCmdObserver::new(self.clone()),
+        );
         coprocessor_host
             .registry
-            .register_global_cmd_observer(1000, BoxCmdObserver::new(self.clone()));
-        coprocessor_host
-            .registry
-            .register_role_observer(1000, BoxRoleObserver::new(self.clone()));
+            .register_role_observer(CAUSAL_OBSERVER_PRIORITY, BoxRoleObserver::new(self.clone()));
+        coprocessor_host.registry.register_apply_snapshot_observer(
+            CAUSAL_OBSERVER_PRIORITY,
+            BoxApplySnapshotObserver::new(self.clone()),
+        );
     }
 }
 
@@ -127,6 +136,31 @@ impl RoleObserver for CausalObserver {
             self.causal_ts.advance(max_ts).unwrap();
             warn!("CausalObserver on_role_change to leader"; "region" => region_id, "max_ts" => max_ts);
         }
+    }
+}
+
+impl ApplySnapshotObserver for CausalObserver {
+    fn apply_plain_kvs(
+        &self,
+        ctx: &mut ObserverContext<'_>,
+        _cf: CfName,
+        _kv_pairs: &[(Vec<u8>, Vec<u8>)],
+    ) {
+        self.handle_snapshot(ctx.region().get_id()).unwrap(); // TODO: error handle
+    }
+
+    fn apply_sst(&self, ctx: &mut ObserverContext<'_>, _cf: CfName, _path: &str) {
+        self.handle_snapshot(ctx.region().get_id()).unwrap(); // TODO: error handle
+    }
+}
+
+impl CausalObserver {
+    fn handle_snapshot(&self, region_id: u64) -> Result<()> {
+        // update to latest ts
+        let ts = self.causal_ts.get_ts()?;
+        self.causal_manager.update_max_ts(region_id, ts);
+        warn!("CausalObserver::handle_snapshot"; "region" => region_id, "latest-ts" => ts, "causal_manager" => ?self.causal_manager);
+        Ok(())
     }
 }
 
