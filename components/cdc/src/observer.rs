@@ -113,6 +113,7 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
     }
 
     fn on_flush_apply(&self, engine: E) {
+        warn!("rawkvtrace: CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
         fail_point!("before_cdc_flush_apply");
         if !self.cmd_batches.borrow().is_empty() {
             let batches = self.cmd_batches.replace(Vec::default());

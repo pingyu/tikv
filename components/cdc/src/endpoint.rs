@@ -604,6 +604,7 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
     }
 
     pub fn on_multi_batch(&mut self, multi: Vec<CmdBatch>, old_value_cb: OldValueCallback) {
+        warn!("rawkvtrace: cdc::Endpoint::on_multi_batch"; "multi" => ?multi);
         fail_point!("cdc_before_handle_multi_batch", |_| {});
         for batch in multi {
             let region_id = batch.region_id;
@@ -611,6 +612,7 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
             if let Some(delegate) = self.capture_regions.get_mut(&region_id) {
                 if delegate.has_failed() {
                     // Skip the batch if the delegate has failed.
+                    warn!("rawkvtrace: cdc::Endpoint::on_multi_batch, delegate.has_failed()";);
                     continue;
                 }
                 if let Err(e) = delegate.on_batch(batch, &old_value_cb, &mut self.old_value_cache) {

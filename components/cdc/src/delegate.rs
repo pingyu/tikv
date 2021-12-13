@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use crossbeam::atomic::AtomicCell;
+use engine_traits::util::ExtendedFields;
 #[cfg(feature = "prost-codec")]
 use kvproto::cdcpb::{
     event::{
@@ -543,14 +544,13 @@ impl Delegate {
             .collect()
     }
 
-    fn sink_data(
+    fn sink_txn_data(
         &mut self,
-        index: u64,
         requests: Vec<Request>,
         old_value_cb: &OldValueCallback,
         old_value_cache: &mut OldValueCache,
         is_one_pc: bool,
-    ) -> Result<()> {
+    ) -> Option<Vec<EventRow>> {
         let txn_extra_op = self.txn_extra_op;
         let mut read_old_value = |row: &mut EventRow, read_old_ts| {
             if txn_extra_op == TxnExtraOp::ReadOldValue {
@@ -591,14 +591,37 @@ impl Delegate {
         }
         // Skip broadcast if there is no Put or Delete.
         if rows.is_empty() {
-            return Ok(());
+            return None;
         }
         let mut entries = Vec::with_capacity(rows.len());
         for (_, v) in rows {
             entries.push(v);
         }
+        Some(entries)
+    }
+
+    fn sink_data(
+        &mut self,
+        index: u64,
+        requests: Vec<Request>,
+        old_value_cb: &OldValueCallback,
+        old_value_cache: &mut OldValueCache,
+        is_one_pc: bool,
+    ) -> Result<()> {
+        let txn_extra_op = self.txn_extra_op;
+
+        let entries = if txn_extra_op == TxnExtraOp::RawKv {
+            self.sink_raw_data(requests)
+        } else {
+            self.sink_txn_data(requests, old_value_cb, old_value_cache, is_one_pc)
+        };
+        if entries.is_none() {
+            // Skip broadcast if there is no Put or Delete.
+            return Ok(());
+        }
+
         let event_entries = EventEntries {
-            entries: entries.into(),
+            entries: entries.unwrap().into(),
             ..Default::default()
         };
         let change_data_event = Event {
@@ -630,6 +653,36 @@ impl Delegate {
                 self.mark_failed();
                 Err(e)
             }
+        }
+    }
+
+    fn sink_raw_data(
+        &mut self,
+        requests: Vec<Request>,
+    ) -> Option<Vec<EventRow>> {
+        let mut entries = Vec::new();
+        for mut req in requests {
+            match req.get_cmd_type() {
+                CmdType::Put => {
+                    entries.push(self.sink_raw_put(req.take_put()));
+                }
+                CmdType::Delete => {
+                    // TODO: self.sink_delete(req.take_delete())
+                }
+                _ => {
+                    debug!(
+                        "skip other command";
+                        "region_id" => self.region_id,
+                        "command" => ?req,
+                    );
+                }
+            }
+        }
+        warn!("rawkvtrace: cdc::Delegate::sink_raw_data"; "entries" => ?entries);
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
         }
     }
 
@@ -725,6 +778,33 @@ impl Delegate {
                 let key = Key::from_encoded(put.take_key()).truncate_ts().unwrap();
                 let row = rows.entry(key.into_raw().unwrap()).or_default();
                 decode_default(put.take_value(), row);
+            }
+            other => {
+                panic!("invalid cf {}", other);
+            }
+        }
+    }
+
+    fn sink_raw_put(
+        &mut self,
+        mut put: PutRequest,
+    ) -> EventRow {
+        match put.cf.as_str() {
+            "" | "default" => {
+                let mut row = EventRow::default();
+                let (extended_fields, user_value_len, _) = ExtendedFields::extract(put.get_value()).unwrap(); // TODO: error handle
+
+                row.commit_ts = extended_fields.causal_ts().unwrap_or(TimeStamp::zero()).into_inner(); // would be no causal timestamp on data written by old version.
+                row.start_ts = row.commit_ts;
+                row.key = put.take_key();
+                row.value = put.get_value()[..user_value_len].to_vec();
+                row.op_type = EventRowOpType::Put;
+                set_event_row_type(&mut row, EventLogType::Committed);
+
+                // TODO: validate commit_ts must be greater than the current resolved_ts
+
+                warn!("cdc::Delegate::sink_raw_put"; "row" => ?row);
+                row
             }
             other => {
                 panic!("invalid cf {}", other);
