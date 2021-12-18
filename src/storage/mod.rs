@@ -1212,10 +1212,10 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                     let ts = causal_ts.get_ts().unwrap(); // TODO: error handle
                     emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
                     warn!(
-                        "pre_prose_cb: ts: {}, key: {:x?}, value: {:x?}",
-                        ts,
-                        req.get_put().get_key(),
-                        req.get_put().get_value()
+                        "(rawkv)pre_prose_cb";
+                        "ts" => ts,
+                        "key" => &log_wrappers::Value::key(req.get_put().get_key()),
+                        "value" => &log_wrappers::Value::value(req.get_put().get_value()),
                     );
                 }
             }

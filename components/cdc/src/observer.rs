@@ -5,9 +5,11 @@ use std::sync::{Arc, RwLock};
 
 use collections::HashMap;
 use engine_rocks::RocksEngine;
+use engine_traits::util::get_causal_ts;
 use engine_traits::KvEngine;
 use fail::fail_point;
 use kvproto::metapb::{Peer, Region};
+use kvproto::raft_cmdpb::Request;
 use raft::StateRole;
 use raftstore::coprocessor::*;
 use raftstore::store::fsm::ObserveID;
@@ -15,6 +17,7 @@ use raftstore::store::RegionSnapshot;
 use raftstore::Error as RaftStoreError;
 use tikv_util::worker::Scheduler;
 use tikv_util::{error, warn};
+use txn_types::TimeStamp;
 
 use crate::endpoint::{Deregister, Task};
 use crate::old_value::{self, OldValueCache, OldValueReader};
@@ -58,6 +61,9 @@ impl CdcObserver {
         coprocessor_host
             .registry
             .register_region_change_observer(100, BoxRegionChangeObserver::new(self.clone()));
+        coprocessor_host
+            .registry
+            .register_query_observer(100, BoxQueryObserver::new(self.clone()));
     }
 
     /// Subscribe an region, the observer will sink events of the region into
@@ -113,7 +119,7 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
     }
 
     fn on_flush_apply(&self, engine: E) {
-        warn!("rawkvtrace: CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
+        warn!("(rawkv)CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
         fail_point!("before_cdc_flush_apply");
         if !self.cmd_batches.borrow().is_empty() {
             let batches = self.cmd_batches.replace(Vec::default());
@@ -178,6 +184,52 @@ impl RegionChangeObserver for CdcObserver {
                 }
             }
         }
+    }
+}
+
+impl QueryObserver for CdcObserver {
+    fn pre_propose_query(
+        &self,
+        ctx: &mut ObserverContext<'_>,
+        requests: &mut Vec<Request>,
+    ) -> Result<()> {
+        // TODO(rawkv): check raw cdc
+        // TODO(rawkv): timestamp in the region is increasing in a region.
+        //   So we can use a more simple structure in ts resolver (now is b tree).
+        let region_id = ctx.region().get_id();
+        let send_track_ts = |key: Vec<u8>, ts: TimeStamp| -> Result<()> {
+            warn!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => ts.prev());
+            // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
+            if let Err(e) = self.sched.schedule(Task::TrackTS {
+                region_id,
+                key,
+                ts: ts.prev(),
+            }) {
+                error!("(rawkv)cdc schedule cdc task failed"; "error" => ?e);
+                Err(Error::Other(box_err!("Schedule error: {:?}", e)))
+            } else {
+                Ok(())
+            }
+        };
+        if self.is_subscribed(region_id).is_some() {
+            warn!("(rawkv)cdc::CdcObserver::pre_propose_query"; "region_id" => region_id, "req" => ?requests);
+
+            for req in requests {
+                if req.has_put() {
+                    if let Some(ts) = get_causal_ts(req.get_put().get_value()) {
+                        // track the first request. TS in batch is increasing.
+                        return send_track_ts(req.get_put().get_key().to_vec(), ts);
+                    }
+                }
+                if req.has_delete() {
+                    // TODO(rawkv): delete request no value field
+                    // if let Some(ts) = get_causal_ts(req.get_delete().get_value()) {
+                    //     return send_track_ts(req.get_put().get_key().clone(), ts);
+                    // }
+                }
+            }
+        }
+        Ok(())
     }
 }
 

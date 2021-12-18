@@ -22,7 +22,7 @@ impl CausalTsProvider for TsoSimpleProvider {
     fn get_ts(&self) -> Result<TimeStamp> {
         // TODO: async
         let ts = block_on(self.pd_client.get_tso())?;
-        warn!("TsoSimpleProvider::get_ts"; "ts" => ?ts);
+        warn!("(rawkv)TsoSimpleProvider::get_ts"; "ts" => ?ts);
         Ok(ts)
     }
 }

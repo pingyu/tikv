@@ -2905,6 +2905,8 @@ where
         cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<ProposalContext> {
         if let Some(cb) = cb {
+            // must be invoked before coprocessor_host.pre_propose().
+            // to ensure observers get the latest values modified by calllback.
             cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
         }
         poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;

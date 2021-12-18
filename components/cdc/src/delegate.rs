@@ -609,9 +609,12 @@ impl Delegate {
         is_one_pc: bool,
     ) -> Result<()> {
         let txn_extra_op = self.txn_extra_op;
+        let mut key_to_untrack = None;
 
         let entries = if txn_extra_op == TxnExtraOp::RawKv {
-            self.sink_raw_data(requests)
+            let (e, key) = self.sink_raw_data(requests);
+            key_to_untrack = key;
+            e
         } else {
             self.sink_txn_data(requests, old_value_cb, old_value_cache, is_one_pc)
         };
@@ -647,23 +650,37 @@ impl Delegate {
             let force_send = false;
             downstream.sink_event(event, force_send)
         };
-        match self.broadcast(send) {
+        let res = match self.broadcast(send) {
             Ok(()) => Ok(()),
             Err(e) => {
                 self.mark_failed();
                 Err(e)
             }
+        };
+
+        // TODO(rawkv): untrack_lock on error ?
+        if let Some(key) = key_to_untrack {
+            self.untrack_lock(key);
         }
+        res
     }
 
     fn sink_raw_data(
         &mut self,
         requests: Vec<Request>,
-    ) -> Option<Vec<EventRow>> {
+    ) -> (Option<Vec<EventRow>>, Option<Vec<u8>>) {
         let mut entries = Vec::new();
+        let mut key_to_untrack = None;
         for mut req in requests {
+            let mut get_key_to_untrack = |key: Vec<u8>| {
+                if key_to_untrack.is_none() {
+                    key_to_untrack = Some(key);
+                }
+            };
+
             match req.get_cmd_type() {
                 CmdType::Put => {
+                    get_key_to_untrack(req.get_put().get_key().to_vec());
                     entries.push(self.sink_raw_put(req.take_put()));
                 }
                 CmdType::Delete => {
@@ -678,11 +695,11 @@ impl Delegate {
                 }
             }
         }
-        warn!("rawkvtrace: cdc::Delegate::sink_raw_data"; "entries" => ?entries);
+        warn!("(rawkv)cdc::Delegate::sink_raw_data"; "entries" => ?entries);
         if entries.is_empty() {
-            None
+            (None, None)
         } else {
-            Some(entries)
+            (Some(entries), key_to_untrack)
         }
     }
 
@@ -785,16 +802,49 @@ impl Delegate {
         }
     }
 
-    fn sink_raw_put(
-        &mut self,
-        mut put: PutRequest,
-    ) -> EventRow {
+    pub fn track_lock(&mut self, ts: TimeStamp, key: Vec<u8>) {
+        warn!("(rawkv)cdc::Delegate::track_lock"; "key" => &log_wrappers::Value::key(&key), "ts" => ?ts);
+        match self.resolver {
+            Some(ref mut resolver) => {
+                resolver.track_lock(ts, key);
+            }
+            None => {
+                assert!(self.pending.is_some(), "region resolver not ready");
+                let pending = self.pending.as_mut().unwrap();
+                let key_len = key.len();
+                pending.locks.push(PendingLock::Track { key, start_ts: ts });
+                pending.pending_bytes += key_len;
+                CDC_PENDING_BYTES_GAUGE.add(key_len as i64);
+            }
+        }
+    }
+
+    fn untrack_lock(&mut self, key: Vec<u8>) {
+        warn!("(rawkv)cdc::Delegate::untrack_lock"; "key" => &log_wrappers::Value::key(&key));
+        match self.resolver {
+            Some(ref mut resolver) => resolver.untrack_lock(&key),
+            None => {
+                assert!(self.pending.is_some(), "region resolver not ready");
+                let pending = self.pending.as_mut().unwrap();
+                let key_len = key.len();
+                pending.locks.push(PendingLock::Untrack { key });
+                pending.pending_bytes += key_len;
+                CDC_PENDING_BYTES_GAUGE.add(key_len as i64);
+            }
+        }
+    }
+
+    fn sink_raw_put(&mut self, mut put: PutRequest) -> EventRow {
         match put.cf.as_str() {
             "" | "default" => {
                 let mut row = EventRow::default();
-                let (extended_fields, user_value_len, _) = ExtendedFields::extract(put.get_value()).unwrap(); // TODO: error handle
+                let (extended_fields, user_value_len, _) =
+                    ExtendedFields::extract(put.get_value()).unwrap(); // TODO: error handle
 
-                row.commit_ts = extended_fields.causal_ts().unwrap_or(TimeStamp::zero()).into_inner(); // would be no causal timestamp on data written by old version.
+                row.commit_ts = extended_fields
+                    .causal_ts()
+                    .unwrap_or_else(TimeStamp::zero)
+                    .into_inner(); // would be no causal timestamp on data written by old version.
                 row.start_ts = row.commit_ts;
                 row.key = put.take_key();
                 row.value = put.get_value()[..user_value_len].to_vec();
@@ -803,7 +853,7 @@ impl Delegate {
 
                 // TODO: validate commit_ts must be greater than the current resolved_ts
 
-                warn!("cdc::Delegate::sink_raw_put"; "row" => ?row);
+                warn!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
                 row
             }
             other => {
