@@ -695,7 +695,7 @@ impl Delegate {
                 }
             }
         }
-        warn!("(rawkv)cdc::Delegate::sink_raw_data"; "entries" => ?entries);
+        debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries" => ?entries);
         if entries.is_empty() {
             (None, None)
         } else {
@@ -803,7 +803,7 @@ impl Delegate {
     }
 
     pub fn track_lock(&mut self, ts: TimeStamp, key: Vec<u8>) {
-        warn!("(rawkv)cdc::Delegate::track_lock"; "key" => &log_wrappers::Value::key(&key), "ts" => ?ts);
+        debug!("(rawkv)cdc::Delegate::track_lock"; "key" => &log_wrappers::Value::key(&key), "ts" => ?ts);
         match self.resolver {
             Some(ref mut resolver) => {
                 resolver.track_lock(ts, key);
@@ -820,7 +820,7 @@ impl Delegate {
     }
 
     fn untrack_lock(&mut self, key: Vec<u8>) {
-        warn!("(rawkv)cdc::Delegate::untrack_lock"; "key" => &log_wrappers::Value::key(&key));
+        debug!("(rawkv)cdc::Delegate::untrack_lock"; "key" => &log_wrappers::Value::key(&key));
         match self.resolver {
             Some(ref mut resolver) => resolver.untrack_lock(&key),
             None => {
@@ -853,7 +853,7 @@ impl Delegate {
 
                 // TODO: validate commit_ts must be greater than the current resolved_ts
 
-                warn!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
+                debug!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
                 row
             }
             other => {

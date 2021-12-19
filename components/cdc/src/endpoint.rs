@@ -618,7 +618,7 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
     }
 
     pub fn on_multi_batch(&mut self, multi: Vec<CmdBatch>, old_value_cb: OldValueCallback) {
-        warn!("(rawkv)cdc::Endpoint::on_multi_batch"; "multi" => ?multi);
+        debug!("(rawkv)cdc::Endpoint::on_multi_batch"; "multi" => ?multi);
         fail_point!("cdc_before_handle_multi_batch", |_| {});
         for batch in multi {
             let region_id = batch.region_id;

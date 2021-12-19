@@ -63,6 +63,11 @@ quick_error! {
         TTLNotEnabled {
             display("ttl is not enabled, but get put request with ttl")
         }
+        CausalTs(err: causal_ts::Error) {
+            from()
+            cause(err)
+            display("{}", err)
+        }
     }
 }
 
@@ -116,6 +121,7 @@ impl ErrorCodeExt for Error {
             ErrorInner::KeyTooLarge(_, _) => error_code::storage::KEY_TOO_LARGE,
             ErrorInner::InvalidCf(_) => error_code::storage::INVALID_CF,
             ErrorInner::TTLNotEnabled => error_code::storage::TTL_NOT_ENABLED,
+            ErrorInner::CausalTs(e) => e.error_code(),
         }
     }
 }

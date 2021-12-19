@@ -70,13 +70,13 @@ use crate::storage::{
     kv::{with_tls_engine, Modify, WriteData},
     lock_manager::{DummyLockManager, LockManager},
     metrics::*,
-    mvcc::PointGetterBuilder,
+    mvcc::{metrics::CONCURRENCY_MANAGER_LOCK_DURATION_HISTOGRAM, PointGetterBuilder},
     raw::ttl::convert_to_expire_ts,
     txn::{commands::TypedCommand, scheduler::Scheduler as TxnScheduler, Command},
     types::StorageCallbackType,
 };
 use causal_ts::{CausalTsProvider, TsoSimpleProvider};
-use concurrency_manager::ConcurrencyManager;
+use concurrency_manager::{ConcurrencyManager, KeyHandleGuard};
 use engine_traits::{util::emplace_causal_ts, CfName, ALL_CFS, CF_DEFAULT, DATA_CFS};
 use futures::prelude::*;
 use kvproto::kvrpcpb::{
@@ -1200,26 +1200,69 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         let mut m = Modify::Put(Self::rawkv_cf(&cf)?, Key::from_encoded(key), value);
         if self.enable_ttl {
             let expire_ts = convert_to_expire_ts(ttl);
-            m.with_extended_fields(expire_ts, Some(0.into()));
+            m.with_extended_fields(expire_ts, Some(TimeStamp::zero()));
         } else if ttl != 0 {
             return Err(Error::from(ErrorInner::TTLNotEnabled));
         }
 
         let causal_ts = self.causal_ts.clone();
-        let pre_propose_cb = Box::new(move |reqs: &mut [RaftPbRequest]| {
-            for req in reqs {
-                if req.has_put() {
-                    let ts = causal_ts.get_ts().unwrap(); // TODO: error handle
-                    emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
-                    warn!(
-                        "(rawkv)pre_prose_cb";
-                        "ts" => ts,
-                        "key" => &log_wrappers::Value::key(req.get_put().get_key()),
-                        "value" => &log_wrappers::Value::value(req.get_put().get_value()),
-                    );
+        let cm = self.concurrency_manager.clone();
+        let pre_propose_cb = Box::new(
+            move |reqs: &mut [RaftPbRequest], guards: &mut Vec<KeyHandleGuard>| {
+                for req in reqs {
+                    let mut get_ts = |key: &[u8]| -> Result<TimeStamp> {
+                        if guards.is_empty() {
+                            // BatchRaftCmdRequestBuilder will merge `pre_propose_cb`s to a batch.
+                            // Check `guards.is_empty()` to know if it's the first request of a batch.
+                            // Will be wrong if there is other kind of `pre_propose_cb`.
+                            // Reference:
+                            //   `cdc::Endpoint::register_min_ts_event`
+                            //   `prewrite::async_commit_timestamp`
+                            // TODO(rawkv): get a better solution.
+                            let key = Key::from_encoded(key.to_vec()); // Treat `key` as use encoded (memory comparable) key, which doesn't affect the correctness of `lock_key`.
+                            let key_guard = CONCURRENCY_MANAGER_LOCK_DURATION_HISTOGRAM
+                                .observe_closure_duration(|| {
+                                    ::futures_executor::block_on(cm.lock_key(&key))
+                                });
+                            let ts = key_guard.with_lock(|l| -> Result<TimeStamp> {
+                            let max_ts = cm.max_ts();
+                            debug!("(rawkv)raw_put::pre_propose_cb::cm.max_ts()"; "max_ts" => max_ts);
+                            causal_ts.advance(max_ts)?;
+
+                            let ts = causal_ts.get_ts()?;
+
+                            *l = Some(txn_types::Lock::new(
+                                txn_types::LockType::Put,
+                                key.into_encoded(), // TODO(rawkv): can be empty ?
+                                ts,
+                                0,
+                                None,
+                                0.into(),
+                                1,
+                                ts,
+                            ));
+                            Ok(ts)
+                        })?;
+                            guards.push(key_guard);
+                            Ok(ts)
+                        } else {
+                            Ok(causal_ts.get_ts()?)
+                        }
+                    };
+
+                    if req.has_put() {
+                        let ts = get_ts(req.get_put().get_key()).unwrap(); // TODO: error handle
+                        emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
+                        debug!(
+                            "(rawkv)pre_prose_cb";
+                            "ts" => ts,
+                            "key" => &log_wrappers::Value::key(req.get_put().get_key()),
+                            "value" => &log_wrappers::Value::value(req.get_put().get_value()),
+                        );
+                    }
                 }
-            }
-        });
+            },
+        );
 
         self.engine.async_write_ext(
             &ctx,

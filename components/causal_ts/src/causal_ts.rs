@@ -9,7 +9,7 @@ pub trait CausalTsProvider: Send + Sync {
 
     /// Advance to not less than ts
     fn advance(&self, ts: TimeStamp) -> Result<()> {
-        warn!("(rawkv)CausalTsProvider::advance()"; "ts" => ts);
+        debug!("(rawkv)CausalTsProvider::advance()"; "ts" => ts);
         Ok(())
     }
 }

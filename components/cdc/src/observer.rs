@@ -119,7 +119,7 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
     }
 
     fn on_flush_apply(&self, engine: E) {
-        warn!("(rawkv)CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
+        debug!("(rawkv)CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
         fail_point!("before_cdc_flush_apply");
         if !self.cmd_batches.borrow().is_empty() {
             let batches = self.cmd_batches.replace(Vec::default());
@@ -198,7 +198,7 @@ impl QueryObserver for CdcObserver {
         //   So we can use a more simple structure in ts resolver (now is b tree).
         let region_id = ctx.region().get_id();
         let send_track_ts = |key: Vec<u8>, ts: TimeStamp| -> Result<()> {
-            warn!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => ts.prev());
+            debug!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => ts.prev());
             // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
             if let Err(e) = self.sched.schedule(Task::TrackTS {
                 region_id,
@@ -212,7 +212,7 @@ impl QueryObserver for CdcObserver {
             }
         };
         if self.is_subscribed(region_id).is_some() {
-            warn!("(rawkv)cdc::CdcObserver::pre_propose_query"; "region_id" => region_id, "req" => ?requests);
+            debug!("(rawkv)cdc::CdcObserver::pre_propose_query"; "region_id" => region_id, "req" => ?requests);
 
             for req in requests {
                 if req.has_put() {

@@ -2,6 +2,7 @@
 
 use std::fmt;
 
+use concurrency_manager::KeyHandleGuard;
 use engine_traits::{CompactedEvent, KvEngine, Snapshot};
 use kvproto::import_sstpb::SstMeta;
 use kvproto::kvrpcpb::{ExtraOp as TxnExtraOp, LeaderInfo};
@@ -54,7 +55,7 @@ where
 pub type ReadCallback<S> = Box<dyn FnOnce(ReadResponse<S>) + Send>;
 pub type WriteCallback = Box<dyn FnOnce(WriteResponse) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
-pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest]) + Send>;
+pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest], &mut Vec<KeyHandleGuard>) + Send>;
 
 /// Variants of callbacks for `Msg`.
 ///  - `Read`: a callback for read only requests including `StatusRequest`,
@@ -122,10 +123,14 @@ where
         }
     }
 
-    pub fn invoke_pre_propose(&mut self, reqs: &mut [RaftPbRequest]) {
+    pub fn invoke_pre_propose(
+        &mut self,
+        reqs: &mut [RaftPbRequest],
+        guards: &mut Vec<KeyHandleGuard>,
+    ) {
         if let Callback::Write { pre_propose_cb, .. } = self {
             if let Some(cb) = pre_propose_cb.take() {
-                cb(reqs)
+                cb(reqs, guards)
             }
         }
     }

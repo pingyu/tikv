@@ -2,6 +2,8 @@
 
 #[macro_use]
 extern crate tikv_util;
+#[macro_use]
+extern crate quick_error;
 
 mod causal_ts;
 pub use causal_ts::*;

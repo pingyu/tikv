@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{cmp, mem, u64, usize};
 
+use concurrency_manager::KeyHandleGuard;
 use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::TrySendError;
 use engine_traits::{Engines, KvEngine, RaftEngine, Snapshot, WriteBatch, WriteOptions};
@@ -2904,12 +2905,15 @@ where
         req: &mut RaftCmdRequest,
         cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<ProposalContext> {
-        if let Some(cb) = cb {
-            // must be invoked before coprocessor_host.pre_propose().
-            // to ensure observers get the latest values modified by calllback.
-            cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
+        {
+            let mut guards = Vec::<KeyHandleGuard>::new();
+            if let Some(cb) = cb {
+                // must be invoked before coprocessor_host.pre_propose().
+                // to ensure observers get the latest values modified by calllback.
+                cb.invoke_pre_propose(req.mut_requests().as_mut_slice(), &mut guards);
+            }
+            poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
         }
-        poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
         let mut ctx = ProposalContext::empty();
 
         if get_sync_log_from_request(req) {

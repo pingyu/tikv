@@ -102,11 +102,11 @@ impl<E: KvEngine> CmdObserver<E> for CausalObserver {
     fn on_prepare_for_apply(&self, _observe_id: ObserveID, _region_id: u64) {}
 
     fn on_apply_cmd(&self, _observe_id: ObserveID, region_id: u64, cmd: Cmd) {
-        warn!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "cmd" => ?cmd);
+        debug!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "cmd" => ?cmd);
         for req in cmd.request.get_requests() {
             if req.has_put() {
                 if let Some(ts) = get_causal_ts(req.get_put().get_value()) {
-                    warn!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "ts" => ts);
+                    debug!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "ts" => ts);
                     self.regions_map
                         .borrow_mut()
                         .entry(region_id)
@@ -124,7 +124,7 @@ impl<E: KvEngine> CmdObserver<E> for CausalObserver {
                 self.causal_manager.update_max_ts(region_id, info.max_ts);
             }
         }
-        warn!("(rawkv)CausalObserver on_flush_apply"; "causal_manager" => ?self.causal_manager);
+        debug!("(rawkv)CausalObserver on_flush_apply"; "causal_manager" => ?self.causal_manager);
     }
 }
 
@@ -134,7 +134,7 @@ impl RoleObserver for CausalObserver {
             let region_id = ctx.region().get_id();
             let max_ts = self.causal_manager.max_ts(region_id);
             self.causal_ts.advance(max_ts).unwrap();
-            warn!("(rawkv)CausalObserver on_role_change to leader"; "region" => region_id, "max_ts" => max_ts);
+            debug!("(rawkv)CausalObserver on_role_change to leader"; "region" => region_id, "max_ts" => max_ts);
         }
     }
 }
@@ -159,7 +159,7 @@ impl CausalObserver {
         // update to latest ts
         let ts = self.causal_ts.get_ts()?;
         self.causal_manager.update_max_ts(region_id, ts);
-        warn!("(rawkv)CausalObserver::handle_snapshot"; "region" => region_id, "latest-ts" => ts, "causal_manager" => ?self.causal_manager);
+        debug!("(rawkv)CausalObserver::handle_snapshot"; "region" => region_id, "latest-ts" => ts, "causal_manager" => ?self.causal_manager);
         Ok(())
     }
 }
