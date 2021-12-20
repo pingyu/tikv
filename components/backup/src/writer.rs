@@ -223,6 +223,9 @@ impl BackupWriter {
                 TxnEntry::Prewrite { .. } => {
                     return Err(Error::Other("prewrite is not supported".into()));
                 }
+                TxnEntry::Raw { .. } => {
+                    // TODO(rawkv)
+                }
             }
             if value_in_default {
                 self.default.update_with(e, need_checksum)?;

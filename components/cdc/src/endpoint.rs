@@ -34,9 +34,10 @@ use resolved_ts::Resolver;
 use security::SecurityManager;
 use tikv::config::CdcConfig;
 use tikv::storage::kv::Snapshot;
-use tikv::storage::mvcc::{DeltaScanner, ScannerBuilder};
+use tikv::storage::mvcc::ScannerBuilder;
 use tikv::storage::txn::TxnEntry;
 use tikv::storage::txn::TxnEntryScanner;
+use tikv::storage::raw::{RawScannerConfig, RawTTLForwardScanner};
 use tikv_util::impl_display_as_debug;
 use tikv_util::time::{Instant, Limiter};
 use tikv_util::timer::SteadyTimer;
@@ -1213,11 +1214,16 @@ impl Initializer {
         let start = Instant::now_coarse();
         // Time range: (checkpoint_ts, current]
         let current = TimeStamp::max();
-        let mut scanner = ScannerBuilder::new(snap, current, false)
-            .range(None, None)
-            .fill_cache(false)
-            .build_delta_scanner(self.checkpoint_ts, self.txn_extra_op)
-            .unwrap();
+        let mut scanner: Box<dyn TxnEntryScanner> = if self.txn_extra_op != TxnExtraOp::RawKv {
+            Box::new(ScannerBuilder::new(snap, current, false)
+                .range(None, None)
+                .fill_cache(false)
+                .build_delta_scanner(self.checkpoint_ts, self.txn_extra_op)
+                .unwrap())
+        } else {
+            let cfg = RawScannerConfig::new(self.checkpoint_ts);
+            Box::new(RawTTLForwardScanner::new(cfg, snap))
+        };
         let conn_id = self.conn_id;
         let mut done = false;
         while !done {
@@ -1250,9 +1256,9 @@ impl Initializer {
         Ok(())
     }
 
-    async fn scan_batch<S: Snapshot>(
+    async fn scan_batch(
         &self,
-        scanner: &mut DeltaScanner<S>,
+        scanner: &mut Box<dyn TxnEntryScanner>,
         resolver: Option<&mut Resolver>,
     ) -> Result<Vec<Option<TxnEntry>>> {
         fail_point!("cdc_scan_batch_fail", |_| {

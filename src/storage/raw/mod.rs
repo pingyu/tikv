@@ -2,6 +2,8 @@
 
 mod store;
 pub mod ttl;
+pub mod scanner;
 
 pub use store::RawStore;
 pub use ttl::TTLSnapshot;
+pub use scanner::*;

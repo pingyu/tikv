@@ -143,6 +143,9 @@ pub enum TxnEntry {
         old_value: Option<Value>,
     },
     // TOOD: Add more entry if needed.
+    Raw {
+        default: KvPair,
+    },
 }
 
 impl TxnEntry {
@@ -205,6 +208,12 @@ impl TxnEntry {
                 size += lock.0.len();
                 size += lock.1.len();
                 size += old_value.as_ref().map_or(0, |v| v.len())
+            }
+            TxnEntry::Raw {
+                default,
+            } => {
+                size += default.0.len();
+                size += default.1.len();
             }
         }
         size
