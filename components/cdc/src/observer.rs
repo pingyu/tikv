@@ -198,12 +198,13 @@ impl QueryObserver for CdcObserver {
         //   So we can use a more simple structure in ts resolver (now is b tree).
         let region_id = ctx.region().get_id();
         let send_track_ts = |key: Vec<u8>, ts: TimeStamp| -> Result<()> {
-            debug!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => ts.prev());
             // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
+            let track_ts = ts.prev();
+            debug!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => track_ts);
             if let Err(e) = self.sched.schedule(Task::TrackTS {
                 region_id,
                 key,
-                ts: ts.prev(),
+                ts: track_ts,
             }) {
                 error!("(rawkv)cdc schedule cdc task failed"; "error" => ?e);
                 Err(Error::Other(box_err!("Schedule error: {:?}", e)))

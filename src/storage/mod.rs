@@ -1226,21 +1226,24 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                                 });
                             let ts = key_guard.with_lock(|l| -> Result<TimeStamp> {
                             let max_ts = cm.max_ts();
-                            debug!("(rawkv)raw_put::pre_propose_cb::cm.max_ts()"; "max_ts" => max_ts);
                             causal_ts.advance(max_ts)?;
 
                             let ts = causal_ts.get_ts()?;
+                            // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
+                            let lock_ts = ts.prev();
 
-                            *l = Some(txn_types::Lock::new(
+                            let lock = Some(txn_types::Lock::new(
                                 txn_types::LockType::Put,
                                 key.into_encoded(), // TODO(rawkv): can be empty ?
-                                ts,
+                                lock_ts,
                                 0,
                                 None,
                                 0.into(),
                                 1,
                                 ts,
                             ));
+                            debug!("(rawkv)raw_put::pre_propose_cb"; "cm.max_ts" => max_ts, "commit_ts" => ts, "lock_ts" => lock_ts, "lock" => ?lock);
+                            *l = lock;
                             Ok(ts)
                         })?;
                             guards.push(key_guard);
@@ -1254,7 +1257,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                         let ts = get_ts(req.get_put().get_key()).unwrap(); // TODO: error handle
                         emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
                         debug!(
-                            "(rawkv)pre_prose_cb";
+                            "(rawkv)raw_put::pre_propose_cb";
                             "ts" => ts,
                             "key" => &log_wrappers::Value::key(req.get_put().get_key()),
                             "value" => &log_wrappers::Value::value(req.get_put().get_value()),

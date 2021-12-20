@@ -699,6 +699,7 @@ impl Delegate {
         if entries.is_empty() {
             (None, None)
         } else {
+            debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries[0].commit_ts" => entries[0].commit_ts, "entries[0].key" => &log_wrappers::Value::key(&entries[0].key));
             (Some(entries), key_to_untrack)
         }
     }
