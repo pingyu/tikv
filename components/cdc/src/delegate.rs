@@ -517,9 +517,7 @@ impl Delegate {
                     current_rows_size += row_size;
                     rows.last_mut().unwrap().push(row);
                 }
-                Some(TxnEntry::Raw {
-                    ..
-                }) => {
+                Some(TxnEntry::Raw { .. }) => {
                     // TODO(rawkv)
                 }
                 None => {

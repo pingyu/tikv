@@ -35,9 +35,9 @@ use security::SecurityManager;
 use tikv::config::CdcConfig;
 use tikv::storage::kv::Snapshot;
 use tikv::storage::mvcc::ScannerBuilder;
+use tikv::storage::raw::{RawForwardScanner, RawScannerConfig};
 use tikv::storage::txn::TxnEntry;
 use tikv::storage::txn::TxnEntryScanner;
-use tikv::storage::raw::{RawScannerConfig, RawTTLForwardScanner};
 use tikv_util::impl_display_as_debug;
 use tikv_util::time::{Instant, Limiter};
 use tikv_util::timer::SteadyTimer;
@@ -1215,14 +1215,16 @@ impl Initializer {
         // Time range: (checkpoint_ts, current]
         let current = TimeStamp::max();
         let mut scanner: Box<dyn TxnEntryScanner> = if self.txn_extra_op != TxnExtraOp::RawKv {
-            Box::new(ScannerBuilder::new(snap, current, false)
-                .range(None, None)
-                .fill_cache(false)
-                .build_delta_scanner(self.checkpoint_ts, self.txn_extra_op)
-                .unwrap())
+            Box::new(
+                ScannerBuilder::new(snap, current, false)
+                    .range(None, None)
+                    .fill_cache(false)
+                    .build_delta_scanner(self.checkpoint_ts, self.txn_extra_op)
+                    .unwrap(),
+            )
         } else {
             let cfg = RawScannerConfig::new(self.checkpoint_ts);
-            Box::new(RawTTLForwardScanner::new(cfg, snap))
+            Box::new(RawForwardScanner::new(cfg, snap))
         };
         let conn_id = self.conn_id;
         let mut done = false;
