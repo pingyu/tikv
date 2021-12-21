@@ -80,6 +80,15 @@ impl Key {
         Key(encoded_key)
     }
 
+    #[inline]
+    pub fn from_encoded_maybe_unbounded(encoded_key: Vec<u8>) -> Option<Key> {
+        if encoded_key.is_empty() {
+            None
+        } else {
+            Some(Key(encoded_key))
+        }
+    }
+
     /// Creates a key with reserved capacity for timestamp from encoded bytes slice.
     #[inline]
     pub fn from_encoded_slice(encoded_key: &[u8]) -> Key {

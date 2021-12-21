@@ -1,7 +1,8 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use engine_traits::{util::ExtendedFields, IterOptions, CF_DEFAULT};
-use txn_types::TimeStamp;
+use engine_traits::{CF_DEFAULT, DATA_KEY_PREFIX_LEN, IterOptions, util::ExtendedFields};
+use tikv_util::keybuilder::KeyBuilder;
+use txn_types::{Key, TimeStamp};
 
 use crate::storage::{
     txn::{ErrorInner as TxnErrorInner, Result as TxnResult, TxnEntry, TxnEntryScanner},
@@ -10,38 +11,33 @@ use crate::storage::{
 
 use super::ttl::current_ts;
 
-pub struct RawScannerConfig {
-    checkpoint_ts: TimeStamp,
-    current_ts: u64,
-    // TODO(rawkv):
-    // start_key: Option<Key>,
-    // end_key: Option<Key>,
-    // enable_ttl: bool,
-}
-
-impl RawScannerConfig {
-    pub fn new(checkpoint_ts: TimeStamp) -> Self {
-        Self {
-            checkpoint_ts,
-            current_ts: current_ts(),
-        }
-    }
-}
-
 pub struct RawForwardScanner<S: Snapshot> {
-    cfg: RawScannerConfig,
     snapshot: S,
     cursor: Option<Cursor<S::Iter>>,
     statistics: Statistics,
+
+    checkpoint_ts: TimeStamp,
+    current_ts: u64,
+    // TODO(rawkv): enable_ttl: bool,
+    start_key: Option<Key>,
+    end_key: Option<Key>,
 }
 
 impl<S: Snapshot> RawForwardScanner<S> {
-    pub fn new(cfg: RawScannerConfig, snapshot: S) -> Self {
+    pub fn new(
+        snapshot: S,
+        checkpoint_ts: TimeStamp,
+        start_key: Option<Key>,
+        end_key: Option<Key>,
+    ) -> Self {
         Self {
-            cfg,
             snapshot,
             cursor: None,
             statistics: Statistics::default(),
+            checkpoint_ts,
+            current_ts: current_ts(),
+            start_key,
+            end_key,
         }
     }
 
@@ -55,7 +51,21 @@ impl<S: Snapshot> RawForwardScanner<S> {
         let cursor = if let Some(ref mut cursor) = self.cursor {
             cursor
         } else {
-            let option = IterOptions::new(None, None, false);
+            let (start_key, end_key) = (self.start_key.take(), self.end_key.take());
+            let l_bound = if let Some(b) = start_key {
+                let builder = KeyBuilder::from_vec(b.into_encoded(), DATA_KEY_PREFIX_LEN, 0);
+                Some(builder)
+            } else {
+                None
+            };
+            let u_bound = if let Some(b) = end_key {
+                let builder = KeyBuilder::from_vec(b.into_encoded(), DATA_KEY_PREFIX_LEN, 0);
+                Some(builder)
+            } else {
+                None
+            };
+
+            let option = IterOptions::new(l_bound, u_bound, false);
             let cursor = Cursor::new(
                 self.snapshot.iter_cf(CF_DEFAULT, option)?,
                 ScanMode::Forward,
@@ -72,24 +82,30 @@ impl<S: Snapshot> RawForwardScanner<S> {
 
         while cursor.valid()? {
             let key = cursor.key(statistics);
-            let value = cursor.value(statistics);
+            let value_with_ext = cursor.value(statistics);
 
-            let (fields, _, _) = ExtendedFields::extract(value).map_err(|err| {
+            let (fields, _, _) = ExtendedFields::extract(value_with_ext).map_err(|err| {
                 TxnErrorInner::Other(box_err!("ExtendedFields::extract error: {:?}", err))
             })?;
 
-            if fields.expire_ts() == 0 || fields.expire_ts() > self.cfg.current_ts {
+            if fields.expire_ts() == 0 || fields.expire_ts() > self.current_ts {
                 if let Some(causal_ts) = fields.causal_ts() {
-                    if causal_ts > self.cfg.checkpoint_ts {
+                    if causal_ts > self.checkpoint_ts {
                         let entry = TxnEntry::Raw {
-                            default: (key.to_owned(), value.to_owned()),
-                            causal_ts,
+                            key: key.to_owned(),
+                            value_with_ext: value_with_ext.to_owned(),
                         };
+
+                        debug!("RawForwardScanner::read_next"; "entry" => ?entry, "causal_ts" => causal_ts);
                         cursor.next(statistics);
                         return Ok(Some(entry));
                     }
                 }
             }
+            debug!("RawForwardScanner::read_next(skip)";
+                "key" => &log_wrappers::Value::key(key),
+                // "value" => &log_wrappers::Value::value(value_with_ext),
+            );
             cursor.next(statistics);
         }
         Ok(None)
@@ -163,28 +179,47 @@ mod tests {
         );
 
         let checkpoint_ts = 1.into();
-        let cfg = RawScannerConfig::new(checkpoint_ts);
-        let mut scanner = RawForwardScanner::new(cfg, snapshot);
-
         {
-            let entry = scanner.next_entry().unwrap().unwrap();
-            let expected = TxnEntry::Raw {
-                default: (key2, value2),
-                causal_ts: 2.into(),
-            };
-            assert_eq!(entry, expected);
+            let mut scanner = RawForwardScanner::new(snapshot.clone(), checkpoint_ts, None, None);
+
+            {
+                let entry = scanner.next_entry().unwrap().unwrap();
+                let expected = TxnEntry::Raw {
+                    key: key2.clone(),
+                    value_with_ext: value2.clone(),
+                };
+                assert_eq!(entry, expected);
+            }
+
+            {
+                let entry = scanner.next_entry().unwrap().unwrap();
+                let expected = TxnEntry::Raw {
+                    key: key3.clone(),
+                    value_with_ext: value3,
+                };
+                assert_eq!(entry, expected);
+            }
+
+            let entry = scanner.next_entry().unwrap();
+            assert!(entry.is_none());
         }
 
         {
-            let entry = scanner.next_entry().unwrap().unwrap();
-            let expected = TxnEntry::Raw {
-                default: (key3, value3),
-                causal_ts: 3.into(),
-            };
-            assert_eq!(entry, expected);
-        }
+            let start_key = Key::from_encoded_maybe_unbounded(key2.clone());
+            let end_key = Key::from_encoded_maybe_unbounded(key3);
+            let mut scanner = RawForwardScanner::new(snapshot, checkpoint_ts, start_key, end_key);
 
-        let entry = scanner.next_entry().unwrap();
-        assert!(entry.is_none());
+            {
+                let entry = scanner.next_entry().unwrap().unwrap();
+                let expected = TxnEntry::Raw {
+                    key: key2,
+                    value_with_ext: value2,
+                };
+                assert_eq!(entry, expected);
+            }
+
+            let entry = scanner.next_entry().unwrap();
+            assert!(entry.is_none());
+        }
     }
 }

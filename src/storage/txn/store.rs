@@ -144,8 +144,8 @@ pub enum TxnEntry {
     },
     // TOOD: Add more entry if needed.
     Raw {
-        default: KvPair,
-        causal_ts: TimeStamp,
+        key: Vec<u8>,
+        value_with_ext: Value, // value with extended fields.
     },
 }
 
@@ -210,10 +210,12 @@ impl TxnEntry {
                 size += lock.1.len();
                 size += old_value.as_ref().map_or(0, |v| v.len())
             }
-            TxnEntry::Raw { default, causal_ts } => {
-                size += default.0.len();
-                size += default.1.len();
-                size += std::mem::size_of_val(&causal_ts);
+            TxnEntry::Raw {
+                key,
+                value_with_ext,
+            } => {
+                size += key.len();
+                size += value_with_ext.len();
             }
         }
         size

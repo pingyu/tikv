@@ -35,7 +35,7 @@ use security::SecurityManager;
 use tikv::config::CdcConfig;
 use tikv::storage::kv::Snapshot;
 use tikv::storage::mvcc::ScannerBuilder;
-use tikv::storage::raw::{RawForwardScanner, RawScannerConfig};
+use tikv::storage::raw::RawForwardScanner;
 use tikv::storage::txn::TxnEntry;
 use tikv::storage::txn::TxnEntryScanner;
 use tikv_util::impl_display_as_debug;
@@ -538,7 +538,9 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
             "region_id" => region_id,
             "conn_id" => ?conn.get_id(),
             "req_id" => request.get_request_id(),
-            "downstream_id" => ?downstream_id);
+            "downstream_id" => ?downstream_id,
+            "start_key" => &log_wrappers::Value::key(request.get_start_key()),
+            "end_key" => &log_wrappers::Value::key(request.get_end_key()));
         let mut is_new_delegate = false;
         let delegate = self.capture_regions.entry(region_id).or_insert_with(|| {
             let d = Delegate::new(region_id);
@@ -597,6 +599,8 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
             observe_id: delegate.id,
             checkpoint_ts: checkpoint_ts.into(),
             build_resolver: is_new_delegate,
+            start_key: request.take_start_key(),
+            end_key: request.take_end_key(),
         };
 
         let raft_router = self.raft_router.clone();
@@ -1106,6 +1110,9 @@ struct Initializer {
     max_scan_batch_size: usize,
 
     build_resolver: bool,
+
+    start_key: Vec<u8>,
+    end_key: Vec<u8>,
 }
 
 impl Initializer {
@@ -1201,7 +1208,9 @@ impl Initializer {
         debug!("cdc async incremental scan";
             "region_id" => region_id,
             "downstream_id" => ?downstream_id,
-            "observe_id" => ?self.observe_id);
+            "observe_id" => ?self.observe_id,
+            "start_key" => &log_wrappers::Value::key(&self.start_key),
+            "end_key" => &log_wrappers::Value::key(&self.end_key));
 
         let mut resolver = if self.build_resolver {
             Some(Resolver::new(region_id))
@@ -1223,8 +1232,14 @@ impl Initializer {
                     .unwrap(),
             )
         } else {
-            let cfg = RawScannerConfig::new(self.checkpoint_ts);
-            Box::new(RawForwardScanner::new(cfg, snap))
+            let start_key = Key::from_encoded_maybe_unbounded(self.start_key.clone());
+            let end_key = Key::from_encoded_maybe_unbounded(self.end_key.clone());
+            Box::new(RawForwardScanner::new(
+                snap,
+                self.checkpoint_ts,
+                start_key,
+                end_key,
+            ))
         };
         let conn_id = self.conn_id;
         let mut done = false;
@@ -1314,6 +1329,7 @@ impl Initializer {
             events.push(CdcEvent::Barrier(Some(cb)));
             barrier = Some(fut);
         }
+        debug!("(rawkv)cdc::endpoint::Initializer::sink_scan_events"; "events" => ?events);
         if let Err(e) = self.sink.send_all(events).await {
             error!("cdc send scan event failed"; "req_id" => ?self.request_id);
             return Err(Error::Sink(e));
@@ -1577,6 +1593,9 @@ mod tests {
             max_scan_batch_size: 1024,
             txn_extra_op: TxnExtraOp::Noop,
             build_resolver: true,
+
+            start_key: vec![],
+            end_key: vec![],
         };
 
         (receiver_worker, pool, initializer, rx, drain)

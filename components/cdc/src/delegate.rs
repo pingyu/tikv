@@ -517,8 +517,33 @@ impl Delegate {
                     current_rows_size += row_size;
                     rows.last_mut().unwrap().push(row);
                 }
-                Some(TxnEntry::Raw { .. }) => {
-                    // TODO(rawkv)
+                Some(TxnEntry::Raw {
+                    key,
+                    mut value_with_ext,
+                }) => {
+                    let mut row = EventRow::default();
+                    let (fields, user_value_len, _) =
+                        ExtendedFields::extract(&value_with_ext).unwrap();
+
+                    row.commit_ts = fields.causal_ts().unwrap().into_inner(); // must have causal timestamp here.
+                    row.start_ts = row.commit_ts;
+                    row.key = key;
+                    value_with_ext.truncate(user_value_len);
+                    row.value = value_with_ext;
+                    row.op_type = EventRowOpType::Put;
+                    set_event_row_type(&mut row, EventLogType::Committed);
+
+                    // TODO(rawkv): TTL ?
+
+                    debug!("(rawkv)cdc::Delegate::convert_to_grpc_events"; "row" => ?row);
+
+                    let row_size = row.key.len() + row.value.len();
+                    if current_rows_size + row_size >= EVENT_MAX_SIZE {
+                        rows.push(Vec::with_capacity(entries_len));
+                        current_rows_size = 0;
+                    }
+                    current_rows_size += row_size;
+                    rows.last_mut().unwrap().push(row);
                 }
                 None => {
                     let mut row = EventRow::default();
@@ -855,7 +880,7 @@ impl Delegate {
                 row.op_type = EventRowOpType::Put;
                 set_event_row_type(&mut row, EventLogType::Committed);
 
-                // TODO: validate commit_ts must be greater than the current resolved_ts
+                // TODO(rawkv): TTL ?
 
                 debug!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
                 row
