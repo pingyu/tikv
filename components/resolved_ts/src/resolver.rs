@@ -3,6 +3,7 @@
 use collections::{HashMap, HashSet};
 use std::cmp;
 use std::collections::BTreeMap;
+use std::ops::Bound::{Included, Unbounded};
 use std::sync::Arc;
 use txn_types::TimeStamp;
 
@@ -52,6 +53,15 @@ impl Resolver {
             self.region_id
         );
         let key: Arc<[u8]> = key.into_boxed_slice().into();
+        if self.locks_by_key.contains_key(&key) {
+            warn!(
+                "duplicated track lock {}@{}, region {}, skip",
+                &log_wrappers::Value::key(&key),
+                start_ts,
+                self.region_id
+            );
+            return;
+        }
         self.locks_by_key.insert(key.clone(), start_ts);
         self.lock_ts_heap.entry(start_ts).or_default().insert(key);
     }
@@ -75,6 +85,22 @@ impl Resolver {
             locked_keys.remove(key);
             if locked_keys.is_empty() {
                 self.lock_ts_heap.remove(&start_ts);
+            }
+        }
+    }
+
+    pub fn untrack_locks_before(&mut self, max_ts: TimeStamp) {
+        let untrack_ts: Vec<TimeStamp> = self
+            .lock_ts_heap
+            .range((Unbounded, Included(max_ts)))
+            .map(|(ts, _)| *ts)
+            .collect();
+        for ts in untrack_ts {
+            if let Some(entry) = self.lock_ts_heap.remove(&ts) {
+                for key in entry {
+                    debug!("(rawkv)untrack locks before"; "max_ts" => max_ts, "ts" => ts, "key" => &log_wrappers::Value::key(&key));
+                    self.locks_by_key.remove(&key);
+                }
             }
         }
     }
@@ -208,5 +234,19 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_untrack_locks_before() {
+        let mut resolver = Resolver::new(1);
+        resolver.init();
+
+        resolver.track_lock(1.into(), b"k1".to_vec());
+        resolver.track_lock(2.into(), b"k2".to_vec());
+        resolver.track_lock(3.into(), b"k3".to_vec());
+
+        resolver.untrack_locks_before(2.into());
+        let resolved_ts = resolver.resolve(100.into()).unwrap();
+        assert_eq!(resolved_ts, 3.into());
     }
 }

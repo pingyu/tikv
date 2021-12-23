@@ -220,8 +220,9 @@ impl fmt::Debug for Task {
                 ref key,
                 ref ts,
             } => de
+                .field("type", &"track_ts")
                 .field("region_id", region_id)
-                .field("key", key)
+                .field("key", &log_wrappers::Value::key(key))
                 .field("ts", ts)
                 .finish(),
         }
@@ -643,6 +644,8 @@ impl<T: 'static + RaftStoreRouter<RocksEngine>> Endpoint<T> {
                         err: e,
                     });
                 }
+            } else {
+                debug!("(rawkv)cdc::Endpoint::on_multi_batch, region not captured"; "region_id" => region_id);
             }
             if let Some(deregister) = deregister {
                 self.on_deregister(deregister);

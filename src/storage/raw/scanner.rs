@@ -1,6 +1,6 @@
 // Copyright 2021 TiKV Project Authors. Licensed under Apache-2.0.
 
-use engine_traits::{CF_DEFAULT, DATA_KEY_PREFIX_LEN, IterOptions, util::ExtendedFields};
+use engine_traits::{util::ExtendedFields, IterOptions, CF_DEFAULT, DATA_KEY_PREFIX_LEN};
 use tikv_util::keybuilder::KeyBuilder;
 use txn_types::{Key, TimeStamp};
 

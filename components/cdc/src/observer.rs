@@ -111,6 +111,7 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
     }
 
     fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+        debug!("(rawkv)CdcObserver::on_apply_cmd"; "region_id" => region_id, "cmd" => ?cmd);
         self.cmd_batches
             .borrow_mut()
             .last_mut()

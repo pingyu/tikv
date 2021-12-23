@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use crossbeam::atomic::AtomicCell;
-use engine_traits::util::ExtendedFields;
+use engine_traits::util::{get_causal_ts, ExtendedFields};
 #[cfg(feature = "prost-codec")]
 use kvproto::cdcpb::{
     event::{
@@ -54,7 +54,7 @@ impl DownstreamID {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DownstreamState {
     Uninitialized,
     Normal,
@@ -184,6 +184,7 @@ impl Pending {
 enum PendingLock {
     Track { key: Vec<u8>, start_ts: TimeStamp },
     Untrack { key: Vec<u8> },
+    UntrackBefore { max_ts: TimeStamp },
 }
 
 /// A CDC delegate of a raftstore region peer.
@@ -389,6 +390,7 @@ impl Delegate {
             match lock {
                 PendingLock::Track { key, start_ts } => resolver.track_lock(start_ts, key),
                 PendingLock::Untrack { key } => resolver.untrack_lock(&key),
+                PendingLock::UntrackBefore { max_ts } => resolver.untrack_locks_before(max_ts),
             }
         }
         self.resolver = Some(resolver);
@@ -637,11 +639,11 @@ impl Delegate {
         is_one_pc: bool,
     ) -> Result<()> {
         let txn_extra_op = self.txn_extra_op;
-        let mut key_to_untrack = None;
+        let mut max_ts = None;
 
         let entries = if txn_extra_op == TxnExtraOp::RawKv {
-            let (e, key) = self.sink_raw_data(requests);
-            key_to_untrack = key;
+            let (e, max_ts_) = self.sink_raw_data(requests);
+            max_ts = max_ts_;
             e
         } else {
             self.sink_txn_data(requests, old_value_cb, old_value_cache, is_one_pc)
@@ -664,6 +666,7 @@ impl Delegate {
         let txn_extra_op = self.txn_extra_op;
         let send = move |downstream: &Downstream| {
             if downstream.state.load() != DownstreamState::Normal {
+                warn!("cdc::Delegate::sink_data, DownstreamState != Normal"; "downstream.state" => ?downstream.state.load());
                 return Ok(());
             }
             let mut event = change_data_event.clone();
@@ -687,8 +690,8 @@ impl Delegate {
         };
 
         // TODO(rawkv): untrack_lock on error ?
-        if let Some(key) = key_to_untrack {
-            self.untrack_lock(key);
+        if let Some(max_ts) = max_ts {
+            self.untrack_locks_before(max_ts);
         }
         res
     }
@@ -696,19 +699,21 @@ impl Delegate {
     fn sink_raw_data(
         &mut self,
         requests: Vec<Request>,
-    ) -> (Option<Vec<EventRow>>, Option<Vec<u8>>) {
+    ) -> (Option<Vec<EventRow>>, Option<TimeStamp>) {
         let mut entries = Vec::new();
-        let mut key_to_untrack = None;
+        let mut max_ts = None;
         for mut req in requests {
-            let mut get_key_to_untrack = |key: Vec<u8>| {
-                if key_to_untrack.is_none() {
-                    key_to_untrack = Some(key);
+            let mut get_max_ts = |value| {
+                if let Some(causal_ts) = get_causal_ts(value) {
+                    if max_ts.is_none() || causal_ts > max_ts.unwrap() {
+                        max_ts = Some(causal_ts);
+                    }
                 }
             };
 
             match req.get_cmd_type() {
                 CmdType::Put => {
-                    get_key_to_untrack(req.get_put().get_key().to_vec());
+                    get_max_ts(req.get_put().get_value());
                     entries.push(self.sink_raw_put(req.take_put()));
                 }
                 CmdType::Delete => {
@@ -728,7 +733,7 @@ impl Delegate {
             (None, None)
         } else {
             debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries[0].commit_ts" => entries[0].commit_ts, "entries[0].key" => &log_wrappers::Value::key(&entries[0].key));
-            (Some(entries), key_to_untrack)
+            (Some(entries), max_ts)
         }
     }
 
@@ -848,17 +853,32 @@ impl Delegate {
         }
     }
 
-    fn untrack_lock(&mut self, key: Vec<u8>) {
-        debug!("(rawkv)cdc::Delegate::untrack_lock"; "key" => &log_wrappers::Value::key(&key));
+    // fn untrack_lock(&mut self, key: Vec<u8>) {
+    //     debug!("(rawkv)cdc::Delegate::untrack_lock"; "key" => &log_wrappers::Value::key(&key));
+    //     match self.resolver {
+    //         Some(ref mut resolver) => resolver.untrack_lock(&key),
+    //         None => {
+    //             assert!(self.pending.is_some(), "region resolver not ready");
+    //             let pending = self.pending.as_mut().unwrap();
+    //             let key_len = key.len();
+    //             pending.locks.push(PendingLock::Untrack { key });
+    //             pending.pending_bytes += key_len;
+    //             CDC_PENDING_BYTES_GAUGE.add(key_len as i64);
+    //         }
+    //     }
+    // }
+
+    fn untrack_locks_before(&mut self, max_ts: TimeStamp) {
+        debug!("(rawkv)cdc::Delegate::untrack_locks_before"; "max_ts" => max_ts);
         match self.resolver {
-            Some(ref mut resolver) => resolver.untrack_lock(&key),
+            Some(ref mut resolver) => resolver.untrack_locks_before(max_ts),
             None => {
                 assert!(self.pending.is_some(), "region resolver not ready");
                 let pending = self.pending.as_mut().unwrap();
-                let key_len = key.len();
-                pending.locks.push(PendingLock::Untrack { key });
-                pending.pending_bytes += key_len;
-                CDC_PENDING_BYTES_GAUGE.add(key_len as i64);
+                let len = std::mem::size_of_val(&max_ts);
+                pending.locks.push(PendingLock::UntrackBefore { max_ts });
+                pending.pending_bytes += len;
+                CDC_PENDING_BYTES_GAUGE.add(len as i64);
             }
         }
     }
