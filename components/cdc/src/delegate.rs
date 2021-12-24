@@ -691,7 +691,7 @@ impl Delegate {
 
         // TODO(rawkv): untrack_lock on error ?
         if let Some(max_ts) = max_ts {
-            self.untrack_locks_before(max_ts);
+            self.untrack_locks_before(max_ts.prev());
         }
         res
     }
