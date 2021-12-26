@@ -568,7 +568,10 @@ impl<ER: RaftEngine> TiKVServer<ER> {
         };
 
         // Create Causal TimeStamp objects.
-        let causal_ts = Arc::new(causal_ts::TsoSimpleProvider::new(self.pd_client.clone()));
+        // let causal_ts = Arc::new(causal_ts::TsoSimpleProvider::new(self.pd_client.clone()));
+        let hlc_provider = causal_ts::HlcProviderWithTsoAsPhyClk::new(self.pd_client.clone());
+        block_on(hlc_provider.init()).unwrap(); // TODO(rawkv): error handle
+        let causal_ts = Arc::new(hlc_provider);
         let causal_manager = Arc::new(causal_ts::RegionsCausalManager::default());
 
         let storage = create_raft_storage(

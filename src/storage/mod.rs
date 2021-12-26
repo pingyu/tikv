@@ -1226,7 +1226,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                                 });
                             let ts = key_guard.with_lock(|l| -> Result<TimeStamp> {
                             let max_ts = cm.max_ts();
-                            causal_ts.advance(max_ts)?;
+                            causal_ts.advance(max_ts.next())?;
 
                             let ts = causal_ts.get_ts()?;
                             // resolved_ts should be smaller than commit_ts, so use ts.prev() here.

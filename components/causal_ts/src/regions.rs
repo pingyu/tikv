@@ -133,7 +133,7 @@ impl RoleObserver for CausalObserver {
         if role == StateRole::Leader {
             let region_id = ctx.region().get_id();
             let max_ts = self.causal_manager.max_ts(region_id);
-            self.causal_ts.advance(max_ts).unwrap();
+            self.causal_ts.advance(max_ts.next()).unwrap();
             debug!("(rawkv)CausalObserver on_role_change to leader"; "region" => region_id, "max_ts" => max_ts);
         }
     }
