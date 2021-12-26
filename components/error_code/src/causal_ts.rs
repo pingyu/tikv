@@ -4,6 +4,7 @@ define_error_codes!(
     "KV:CausalTs:",
 
     PD => ("PdClient", "", ""),
+    TSO => ("TSO", "", ""),
 
     UNKNOWN => ("Unknown", "", "")
 );

@@ -16,3 +16,6 @@ pub use tso::*;
 
 mod regions;
 pub use regions::*;
+
+mod hlc;
+pub use hlc::*;

@@ -12,6 +12,10 @@ quick_error! {
             cause(err)
             display("PdClient {}", err)
         }
+        Tso(msg: String) {
+            from()
+            display("TSO {}", msg)
+        }
         Other(err: Box<dyn error::Error + Sync + Send>) {
             from()
             cause(err.as_ref())
@@ -26,6 +30,7 @@ impl ErrorCodeExt for Error {
     fn error_code(&self) -> ErrorCode {
         match self {
             Error::Pd(_) => error_code::causal_ts::PD,
+            Error::Tso(_) => error_code::causal_ts::TSO,
             Error::Other(_) => error_code::UNKNOWN,
         }
     }

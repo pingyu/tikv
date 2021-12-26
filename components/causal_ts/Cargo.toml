@@ -18,6 +18,7 @@ raftstore = { path = "../raftstore", default-features = false }
 raft = { version = "0.6.0-alpha", default-features = false }
 quick-error = "1.2.3"
 error_code = { path = "../error_code", default-features = false }
+fail = "0.4"
 
 [dev-dependencies]
 test_raftstore = { path = "../test_raftstore", default-features = false }
