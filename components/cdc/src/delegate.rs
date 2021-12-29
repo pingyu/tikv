@@ -537,7 +537,14 @@ impl Delegate {
 
                     // TODO(rawkv): TTL ?
 
-                    debug!("(rawkv)cdc::Delegate::convert_to_grpc_events"; "row" => ?row);
+                    debug!("(rawkv)cdc::Delegate::convert_to_grpc_events, row:";
+                        "start_ts" => row.start_ts,
+                        "commit_ts" => row.commit_ts,
+                        "r_type" => ?row.r_type,
+                        "op_type" => ?row.op_type,
+                        "key" => &log_wrappers::Value::key(&row.key),
+                        "region_id" => region_id,
+                    );
 
                     let row_size = row.key.len() + row.value.len();
                     if current_rows_size + row_size >= EVENT_MAX_SIZE {
@@ -728,11 +735,15 @@ impl Delegate {
                 }
             }
         }
-        debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries" => ?entries);
+        // debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries" => ?entries);
         if entries.is_empty() {
             (None, None)
         } else {
-            debug!("(rawkv)cdc::Delegate::sink_raw_data"; "entries[0].commit_ts" => entries[0].commit_ts, "entries[0].key" => &log_wrappers::Value::key(&entries[0].key));
+            debug!("(rawkv)cdc::Delegate::sink_raw_data";
+                "entries[0].commit_ts" => entries[0].commit_ts,
+                "entries[0].key" => &log_wrappers::Value::key(&entries[0].key),
+                "region_id" => self.region_id,
+            );
             (Some(entries), max_ts)
         }
     }
@@ -837,7 +848,7 @@ impl Delegate {
     }
 
     pub fn track_lock(&mut self, ts: TimeStamp, key: Vec<u8>) {
-        debug!("(rawkv)cdc::Delegate::track_lock"; "key" => &log_wrappers::Value::key(&key), "ts" => ?ts);
+        debug!("(rawkv)cdc::Delegate::track_lock"; "key" => &log_wrappers::Value::key(&key), "ts" => ?ts, "region_id" => self.region_id);
         match self.resolver {
             Some(ref mut resolver) => {
                 resolver.track_lock(ts, key);
@@ -869,7 +880,7 @@ impl Delegate {
     // }
 
     fn untrack_locks_before(&mut self, max_ts: TimeStamp) {
-        debug!("(rawkv)cdc::Delegate::untrack_locks_before"; "max_ts" => max_ts);
+        debug!("(rawkv)cdc::Delegate::untrack_locks_before"; "max_ts" => max_ts, "region_id" => self.region_id);
         match self.resolver {
             Some(ref mut resolver) => resolver.untrack_locks_before(max_ts),
             None => {
@@ -902,7 +913,16 @@ impl Delegate {
 
                 // TODO(rawkv): TTL ?
 
-                debug!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
+                // debug!("(rawkv)cdc::Delegate::sink_raw_put"; "row" => ?row);
+                debug!("(rawkv)cdc::Delegate::sink_raw_put, row:";
+                    "start_ts" => row.start_ts,
+                    "commit_ts" => row.commit_ts,
+                    "r_type" => ?row.r_type,
+                    "op_type" => ?row.op_type,
+                    "key" => &log_wrappers::Value::key(&row.key),
+                    "region_id" => self.region_id,
+                );
+
                 row
             }
             other => {

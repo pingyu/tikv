@@ -54,15 +54,17 @@ impl Resolver {
         );
         let key: Arc<[u8]> = key.into_boxed_slice().into();
         if self.locks_by_key.contains_key(&key) {
+            // (rawkv) Happens when a second request with same key is proposed before the first one is applied.
             warn!(
                 "duplicated track lock {}@{}, region {}, skip",
                 &log_wrappers::Value::key(&key),
                 start_ts,
                 self.region_id
             );
-            return;
+        } else {
+            // (rawkv) Note that must be untrack by "untrack_locks_before". Otherwise the lock with another ts will not be untracked.
+            self.locks_by_key.insert(key.clone(), start_ts);
         }
-        self.locks_by_key.insert(key.clone(), start_ts);
         self.lock_ts_heap.entry(start_ts).or_default().insert(key);
     }
 
@@ -98,7 +100,12 @@ impl Resolver {
         for ts in untrack_ts {
             if let Some(entry) = self.lock_ts_heap.remove(&ts) {
                 for key in entry {
-                    debug!("(rawkv)untrack locks before"; "max_ts" => max_ts, "ts" => ts, "key" => &log_wrappers::Value::key(&key));
+                    debug!("(rawkv)untrack locks before, max_ts {}, {}@{}, region {}",
+                        max_ts,
+                        &log_wrappers::Value::key(&key),
+                        ts,
+                        self.region_id,
+                    );
                     self.locks_by_key.remove(&key);
                 }
             }
