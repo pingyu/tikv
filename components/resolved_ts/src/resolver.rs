@@ -100,7 +100,8 @@ impl Resolver {
         for ts in untrack_ts {
             if let Some(entry) = self.lock_ts_heap.remove(&ts) {
                 for key in entry {
-                    debug!("(rawkv)untrack locks before, max_ts {}, {}@{}, region {}",
+                    debug!(
+                        "(rawkv)untrack locks before, max_ts {}, {}@{}, region {}",
                         max_ts,
                         &log_wrappers::Value::key(&key),
                         ts,

@@ -431,8 +431,18 @@ where
 
         let region_id = delegate.region_id();
         // TODO: skip this step when we do not need to observe cmds.
+        let t = if delegate.observe_cmd.is_some() {
+            Some(Instant::now_coarse())
+        } else {
+            None
+        };
         self.host
             .prepare_for_apply(delegate.observe_cmd.as_ref(), region_id);
+        if let Some(t) = t {
+            COPROCESSOR_DURATION
+                .with_label_values(&["on_prepare_apply"])
+                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+        }
     }
 
     /// Commits all changes have done for delegate. `persistent` indicates whether
@@ -490,8 +500,13 @@ where
                 });
             }
         }
+
+        let t = Instant::now_coarse();
         // Call it before invoking callback for preventing Commit is executed before Prewrite is observed.
         self.host.on_flush_apply(self.engine.clone());
+        COPROCESSOR_DURATION
+            .with_label_values(&["on_flush_apply"])
+            .observe(duration_to_sec(t.saturating_elapsed()) as f64); // (rawkv)Duration includes duration of followers.
 
         for cbs in self.cbs.drain(..) {
             cbs.invoke_all(&self.host);
@@ -1078,9 +1093,20 @@ where
         cmd_resp::bind_term(&mut resp, self.term);
         let cmd_cb = self.find_pending(index, term, is_conf_change_cmd(&cmd));
         let cmd = Cmd::new(index, cmd, resp);
+
+        let t = if self.observe_cmd.is_some() {
+            Some(Instant::now_coarse())
+        } else {
+            None
+        };
         apply_ctx
             .host
             .on_apply_cmd(self.observe_cmd.as_ref(), self.region_id(), cmd.clone());
+        if let Some(t) = t {
+            COPROCESSOR_DURATION
+                .with_label_values(&["on_apply_cmd"])
+                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+        }
 
         apply_ctx.cbs.last_mut().unwrap().push(cmd_cb, cmd);
 

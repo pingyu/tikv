@@ -2906,6 +2906,7 @@ where
         cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<ProposalContext> {
         {
+            let t = TiInstant::now_coarse();
             let mut guards = Vec::<KeyHandleGuard>::new();
             if let Some(cb) = cb {
                 // must be invoked before coprocessor_host.pre_propose().
@@ -2913,6 +2914,10 @@ where
                 cb.invoke_pre_propose(req.mut_requests().as_mut_slice(), &mut guards);
             }
             poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
+            poll_ctx
+                .raft_metrics
+                .pre_propose_coprocessor
+                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
         }
         let mut ctx = ProposalContext::empty();
 

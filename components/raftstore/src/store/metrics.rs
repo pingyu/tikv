@@ -240,6 +240,14 @@ lazy_static! {
             exponential_buckets(0.0005, 2.0, 20).unwrap()
         ).unwrap();
 
+    pub static ref COPROCESSOR_DURATION: HistogramVec =
+        register_histogram_vec!(
+            "tikv_raftstore_coprocessor_duration_seconds",
+            "Bucketed histogram of coprocessor duration.",
+            &["type"],
+            exponential_buckets(0.0005, 2.0, 20).unwrap()
+        ).unwrap();
+
     pub static ref STORE_APPLY_LOG_HISTOGRAM: Histogram =
         register_histogram!(
             "tikv_raftstore_apply_log_duration_seconds",
