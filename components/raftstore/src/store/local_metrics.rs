@@ -402,3 +402,39 @@ impl RaftMetrics {
         missing.clear();
     }
 }
+
+#[derive(Clone)]
+pub struct CoprocessorMetrics {
+    // pub pre_propose_coprocessor: LocalHistogram, // moved to RaftMetrics
+    pub on_prepare_apply: LocalHistogram,
+    pub on_apply_cmd: LocalHistogram,
+    pub on_flush_apply: LocalHistogram,
+}
+
+impl Default for CoprocessorMetrics {
+    fn default() -> Self {
+        Self {
+            // pre_propose_coprocessor: COPROCESSOR_DURATION
+            //     .with_label_values(&["on_pre_propose"])
+            //     .local(),
+            on_prepare_apply: COPROCESSOR_DURATION
+                .with_label_values(&["on_prepare_apply"])
+                .local(),
+            on_apply_cmd: COPROCESSOR_DURATION
+                .with_label_values(&["on_apply_cmd"])
+                .local(),
+            on_flush_apply: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply"])
+                .local(),
+        }
+    }
+}
+
+impl CoprocessorMetrics {
+    pub fn flush(&mut self) {
+        // self.pre_propose_coprocessor.flush();
+        self.on_prepare_apply.flush();
+        self.on_apply_cmd.flush();
+        self.on_flush_apply.flush();
+    }
+}

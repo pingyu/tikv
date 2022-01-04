@@ -53,6 +53,7 @@ use uuid::Builder as UuidBuilder;
 
 use crate::coprocessor::{Cmd, CoprocessorHost};
 use crate::store::fsm::RaftPollerBuilder;
+use crate::store::local_metrics::CoprocessorMetrics;
 use crate::store::metrics::*;
 use crate::store::msg::{Callback, PeerMsg, ReadResponse, SignificantMsg};
 use crate::store::peer::Peer;
@@ -356,6 +357,8 @@ where
 
     perf_context: EK::PerfContext,
 
+    pub coprocessor_metrics: CoprocessorMetrics,
+
     yield_duration: Duration,
 
     store_id: u64,
@@ -413,6 +416,7 @@ where
             exec_ctx: None,
             use_delete_range: cfg.use_delete_range,
             perf_context: engine.get_perf_context(cfg.perf_level, PerfContextKind::RaftstoreApply),
+            coprocessor_metrics: CoprocessorMetrics::default(),
             yield_duration: cfg.apply_yield_duration.0,
             delete_ssts: vec![],
             store_id,
@@ -439,8 +443,8 @@ where
         self.host
             .prepare_for_apply(delegate.observe_cmd.as_ref(), region_id);
         if let Some(t) = t {
-            COPROCESSOR_DURATION
-                .with_label_values(&["on_prepare_apply"])
+            self.coprocessor_metrics
+                .on_prepare_apply
                 .observe(duration_to_sec(t.saturating_elapsed()) as f64);
         }
     }
@@ -504,8 +508,8 @@ where
         let t = Instant::now_coarse();
         // Call it before invoking callback for preventing Commit is executed before Prewrite is observed.
         self.host.on_flush_apply(self.engine.clone());
-        COPROCESSOR_DURATION
-            .with_label_values(&["on_flush_apply"])
+        self.coprocessor_metrics
+            .on_flush_apply
             .observe(duration_to_sec(t.saturating_elapsed()) as f64); // (rawkv)Duration includes duration of followers.
 
         for cbs in self.cbs.drain(..) {
@@ -574,6 +578,7 @@ where
 
         let elapsed = t.saturating_elapsed();
         STORE_APPLY_LOG_HISTOGRAM.observe(duration_to_sec(elapsed) as f64);
+        self.coprocessor_metrics.flush();
 
         slow_log!(
             elapsed,
@@ -1103,8 +1108,8 @@ where
             .host
             .on_apply_cmd(self.observe_cmd.as_ref(), self.region_id(), cmd.clone());
         if let Some(t) = t {
-            COPROCESSOR_DURATION
-                .with_label_values(&["on_apply_cmd"])
+            apply_ctx.coprocessor_metrics
+                .on_apply_cmd
                 .observe(duration_to_sec(t.saturating_elapsed()) as f64);
         }
 
