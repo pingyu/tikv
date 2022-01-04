@@ -2,7 +2,3 @@
 
 mod test_hlc_provider;
 mod test_tso_provider;
-
-#[path = "../mod.rs"]
-mod testsuite;
-pub use testsuite::*;

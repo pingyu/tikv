@@ -45,7 +45,14 @@ const DEFAULT_TIMEOUT_SECS: u64 = 5;
 
 pub type Callback<T> = Box<dyn FnOnce((CbContext, Result<T>)) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
-pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest], &mut Vec<KeyHandleGuard>) + Send>;
+pub type RequestCallback = Box<
+    dyn FnOnce(
+        &mut [RaftPbRequest],
+        &mut Vec<KeyHandleGuard>,
+        &[&mut prometheus::local::LocalHistogram],
+        tikv_util::time::Instant,
+    ) + Send,
+>;
 pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug)]

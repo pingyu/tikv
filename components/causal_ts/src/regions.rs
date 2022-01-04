@@ -168,12 +168,12 @@ impl CausalObserver {
 mod tests {
     use super::*;
     use crate::TsoSimpleProvider;
+    use engine_rocks::util::new_temp_engine;
     use engine_rocks::RocksEngine;
     use engine_traits::util::append_extended_fields;
     use kvproto::raft_cmdpb::*;
     use std::convert::TryInto;
     use test_pd::TestPdClient;
-    use tikv::storage::kv::TestEngineBuilder;
 
     #[test]
     fn test_causal_observer() {
@@ -184,7 +184,11 @@ mod tests {
         let ob = CausalObserver::new(manager.clone(), causal_ts);
         let ob_id = ObserveID::new();
 
-        let engine = TestEngineBuilder::new().build().unwrap().get_rocksdb();
+        let path = tempfile::Builder::new()
+            .prefix("test-causal-observer")
+            .tempdir()
+            .unwrap();
+        let engines = new_temp_engine(&path);
 
         let testcases: Vec<(u64, &[u64])> = vec![(10, &[100, 200]), (20, &[101]), (20, &[102])];
         let mut m = RegionsMap::default();
@@ -214,7 +218,7 @@ mod tests {
                 region_id,
                 Cmd::new(i.try_into().unwrap(), cmd_req, RaftCmdResponse::default()),
             );
-            ob.on_flush_apply(engine.clone());
+            ob.on_flush_apply(engines.kv.clone());
         }
 
         for (k, v) in m {

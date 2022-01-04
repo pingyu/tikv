@@ -55,7 +55,14 @@ where
 pub type ReadCallback<S> = Box<dyn FnOnce(ReadResponse<S>) + Send>;
 pub type WriteCallback = Box<dyn FnOnce(WriteResponse) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
-pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest], &mut Vec<KeyHandleGuard>) + Send>;
+pub type RequestCallback = Box<
+    dyn FnOnce(
+        &mut [RaftPbRequest],
+        &mut Vec<KeyHandleGuard>,
+        &[&mut prometheus::local::LocalHistogram],
+        Instant,
+    ) + Send,
+>;
 
 /// Variants of callbacks for `Msg`.
 ///  - `Read`: a callback for read only requests including `StatusRequest`,
@@ -127,10 +134,12 @@ where
         &mut self,
         reqs: &mut [RaftPbRequest],
         guards: &mut Vec<KeyHandleGuard>,
+        metrics: &[&mut prometheus::local::LocalHistogram],
+        t: Instant,
     ) {
         if let Callback::Write { pre_propose_cb, .. } = self {
             if let Some(cb) = pre_propose_cb.take() {
-                cb(reqs, guards)
+                cb(reqs, guards, metrics, t)
             }
         }
     }

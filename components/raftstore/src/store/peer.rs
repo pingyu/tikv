@@ -2907,11 +2907,21 @@ where
     ) -> Result<ProposalContext> {
         {
             let t = TiInstant::now_coarse();
+            let metrics = vec![
+                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_1,
+                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_2,
+                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_3,
+                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_4,
+            ];
             let mut guards = Vec::<KeyHandleGuard>::new();
             if let Some(cb) = cb {
                 // must be invoked before coprocessor_host.pre_propose().
                 // to ensure observers get the latest values modified by calllback.
-                cb.invoke_pre_propose(req.mut_requests().as_mut_slice(), &mut guards);
+                cb.invoke_pre_propose(req.mut_requests().as_mut_slice(), &mut guards, &metrics, t);
+                poll_ctx
+                    .raft_metrics
+                    .pre_propose_coprocessor_5
+                    .observe(duration_to_sec(t.saturating_elapsed()) as f64);
             }
             poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
             poll_ctx

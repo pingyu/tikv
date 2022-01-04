@@ -499,10 +499,9 @@ dependencies = [
  "raftstore",
  "slog",
  "slog-global",
+ "tempfile",
  "test_pd",
- "test_raftstore",
  "test_util",
- "tikv",
  "tikv_util",
  "txn_types",
 ]
@@ -761,7 +760,10 @@ dependencies = [
  "futures 0.3.8",
  "parking_lot 0.11.0",
  "rand 0.7.3",
+ "slog",
+ "slog-global",
  "tikv_alloc",
+ "tikv_util",
  "tokio 0.2.24",
  "txn_types",
 ]

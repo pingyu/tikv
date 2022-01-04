@@ -313,7 +313,7 @@ rpath = false
 [profile.release]
 opt-level = 3
 debug = false
-codegen-units = 1
+codegen-units = 16
 lto = "thin"
 incremental = false
 panic = 'unwind'

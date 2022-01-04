@@ -1108,7 +1108,8 @@ where
             .host
             .on_apply_cmd(self.observe_cmd.as_ref(), self.region_id(), cmd.clone());
         if let Some(t) = t {
-            apply_ctx.coprocessor_metrics
+            apply_ctx
+                .coprocessor_metrics
                 .on_apply_cmd
                 .observe(duration_to_sec(t.saturating_elapsed()) as f64);
         }
