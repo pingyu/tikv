@@ -436,7 +436,7 @@ where
         let region_id = delegate.region_id();
         // TODO: skip this step when we do not need to observe cmds.
         let t = if delegate.observe_cmd.is_some() {
-            Some(Instant::now_coarse())
+            Some(Instant::now())
         } else {
             None
         };
@@ -445,7 +445,7 @@ where
         if let Some(t) = t {
             self.coprocessor_metrics
                 .on_prepare_apply
-                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+                .observe(t.saturating_elapsed_secs());
         }
     }
 
@@ -505,12 +505,12 @@ where
             }
         }
 
-        let t = Instant::now_coarse();
-        // Call it before invoking callback for preventing Commit is executed before Prewrite is observed.
-        self.host.on_flush_apply(self.engine.clone());
         self.coprocessor_metrics
             .on_flush_apply
-            .observe(duration_to_sec(t.saturating_elapsed()) as f64); // (rawkv)Duration includes duration of followers.
+            .observe_closure_duration(|| {
+                // Call it before invoking callback for preventing Commit is executed before Prewrite is observed.
+                self.host.on_flush_apply(self.engine.clone());
+            });
 
         for cbs in self.cbs.drain(..) {
             cbs.invoke_all(&self.host);
@@ -1100,7 +1100,7 @@ where
         let cmd = Cmd::new(index, cmd, resp);
 
         let t = if self.observe_cmd.is_some() {
-            Some(Instant::now_coarse())
+            Some(Instant::now())
         } else {
             None
         };
@@ -1111,7 +1111,7 @@ where
             apply_ctx
                 .coprocessor_metrics
                 .on_apply_cmd
-                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+                .observe(t.saturating_elapsed_secs());
         }
 
         apply_ctx.cbs.last_mut().unwrap().push(cmd_cb, cmd);

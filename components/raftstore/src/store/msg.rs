@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use concurrency_manager::RegionRawLockGuard;
+use concurrency_manager::KeyHandleGuard;
 use engine_traits::{CompactedEvent, KvEngine, Snapshot};
 use kvproto::import_sstpb::SstMeta;
 use kvproto::kvrpcpb::{ExtraOp as TxnExtraOp, LeaderInfo};
@@ -59,7 +59,7 @@ pub type RequestCallback = Box<
     dyn FnOnce(
         &mut [RaftPbRequest],
         u64,
-        &mut Vec<RegionRawLockGuard>,
+        &mut Vec<KeyHandleGuard>,
         &[&mut prometheus::local::LocalHistogram],
         Instant,
     ) + Send,
@@ -135,7 +135,7 @@ where
         &mut self,
         reqs: &mut [RaftPbRequest],
         region_id: u64,
-        guards: &mut Vec<RegionRawLockGuard>,
+        guards: &mut Vec<KeyHandleGuard>,
         metrics: &[&mut prometheus::local::LocalHistogram],
         t: Instant,
     ) {

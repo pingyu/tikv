@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{cmp, mem, u64, usize};
 
-use concurrency_manager::RegionRawLockGuard;
+use concurrency_manager::KeyHandleGuard;
 use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::TrySendError;
 use engine_traits::{Engines, KvEngine, RaftEngine, Snapshot, WriteBatch, WriteOptions};
@@ -2913,7 +2913,7 @@ where
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_3,
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_4,
             ];
-            let mut guards = Vec::<RegionRawLockGuard>::new();
+            let mut guards = Vec::<KeyHandleGuard>::new();
             if let Some(cb) = cb {
                 // must be invoked before coprocessor_host.pre_propose().
                 // to ensure observers get the latest values modified by calllback.
@@ -2927,13 +2927,13 @@ where
                 poll_ctx
                     .raft_metrics
                     .pre_propose_coprocessor_5
-                    .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+                    .observe(t.saturating_elapsed_secs());
             }
             poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
             poll_ctx
                 .raft_metrics
                 .pre_propose_coprocessor
-                .observe(duration_to_sec(t.saturating_elapsed()) as f64);
+                .observe(t.saturating_elapsed_secs());
         }
         let mut ctx = ProposalContext::empty();
 

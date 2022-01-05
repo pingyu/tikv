@@ -16,7 +16,7 @@ use std::fmt;
 use std::time::Duration;
 use std::{error, ptr, result};
 
-use concurrency_manager::RegionRawLockGuard;
+use concurrency_manager::KeyHandleGuard;
 use engine_rocks::RocksTablePropertiesCollection;
 use engine_traits::util::{append_expire_ts, append_extended_fields};
 use engine_traits::{CfName, CF_DEFAULT};
@@ -49,7 +49,7 @@ pub type RequestCallback = Box<
     dyn FnOnce(
         &mut [RaftPbRequest],
         u64,
-        &mut Vec<RegionRawLockGuard>,
+        &mut Vec<KeyHandleGuard>,
         &[&mut prometheus::local::LocalHistogram],
         tikv_util::time::Instant,
     ) + Send,
