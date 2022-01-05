@@ -385,10 +385,10 @@ where
         if pre_propose_cbs.is_empty() {
             None
         } else {
-            Some(Box::new(move |reqs, region_id, guards, metrics, t| {
+            Some(Box::new(move |reqs| {
                 for (i, cb) in pre_propose_cbs.into_iter().enumerate() {
                     let (start, end) = intervals[i];
-                    cb(&mut reqs[start..end], region_id, guards, metrics, t);
+                    cb(&mut reqs[start..end]);
                 }
             }))
         }

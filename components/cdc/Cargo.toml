@@ -81,6 +81,7 @@ prometheus = { version = "0.10", default-features = false, features = ["nightly"
 protobuf = "2.8"
 prost = "0.7"
 futures-timer = "3.0"
+causal_ts = { path = "../causal_ts" }
 
 [dev-dependencies]
 assert_matches = "1.5"

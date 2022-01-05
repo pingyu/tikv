@@ -79,6 +79,13 @@ pub trait AdminObserver: Coprocessor {
 }
 
 pub trait QueryObserver: Coprocessor {
+    /// Set barrier before pre_propose_query.
+    ///
+    /// Used by RawKV CDC resolver.
+    fn pre_propose_barrier(&self, _ctx: &mut ObserverContext<'_>) -> Result<()> {
+        Ok(())
+    }
+
     /// Hook to call before proposing write request.
     ///
     /// We don't propose read request, hence there is no hook for it yet.

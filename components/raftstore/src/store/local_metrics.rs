@@ -362,11 +362,6 @@ pub struct RaftMetrics {
     pub leader_missing: Arc<Mutex<HashSet<u64>>>,
     pub invalid_proposal: RaftInvalidProposeMetrics,
     pub pre_propose_coprocessor: LocalHistogram,
-    pub pre_propose_coprocessor_1: LocalHistogram,
-    pub pre_propose_coprocessor_2: LocalHistogram,
-    pub pre_propose_coprocessor_3: LocalHistogram,
-    pub pre_propose_coprocessor_4: LocalHistogram,
-    pub pre_propose_coprocessor_5: LocalHistogram,
 }
 
 impl Default for RaftMetrics {
@@ -386,21 +381,6 @@ impl Default for RaftMetrics {
             pre_propose_coprocessor: COPROCESSOR_DURATION
                 .with_label_values(&["on_pre_propose"])
                 .local(),
-            pre_propose_coprocessor_1: COPROCESSOR_DURATION
-                .with_label_values(&["on_pre_propose_1"])
-                .local(),
-            pre_propose_coprocessor_2: COPROCESSOR_DURATION
-                .with_label_values(&["on_pre_propose_2"])
-                .local(),
-            pre_propose_coprocessor_3: COPROCESSOR_DURATION
-                .with_label_values(&["on_pre_propose_3"])
-                .local(),
-            pre_propose_coprocessor_4: COPROCESSOR_DURATION
-                .with_label_values(&["on_pre_propose_4"])
-                .local(),
-            pre_propose_coprocessor_5: COPROCESSOR_DURATION
-                .with_label_values(&["on_pre_propose_5"])
-                .local(),
         }
     }
 }
@@ -417,11 +397,6 @@ impl RaftMetrics {
         self.message_dropped.flush();
         self.invalid_proposal.flush();
         self.pre_propose_coprocessor.flush();
-        self.pre_propose_coprocessor_1.flush();
-        self.pre_propose_coprocessor_2.flush();
-        self.pre_propose_coprocessor_3.flush();
-        self.pre_propose_coprocessor_4.flush();
-        self.pre_propose_coprocessor_5.flush();
         let mut missing = self.leader_missing.lock().unwrap();
         LEADER_MISSING.set(missing.len() as i64);
         missing.clear();

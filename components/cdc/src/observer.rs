@@ -35,6 +35,7 @@ pub struct CdcObserver {
     // TODO: it may become a bottleneck, find a better way to manage the registry.
     observe_regions: Arc<RwLock<HashMap<u64, ObserveID>>>,
     cmd_batches: RefCell<Vec<CmdBatch>>,
+    causal_ts: Option<Arc<dyn causal_ts::CausalTsProvider>>,
 }
 
 impl CdcObserver {
@@ -43,10 +44,18 @@ impl CdcObserver {
     /// Events are strong ordered, so `sched` must be implemented as
     /// a FIFO queue.
     pub fn new(sched: Scheduler<Task>) -> CdcObserver {
+        Self::new_opt(sched, None)
+    }
+
+    pub fn new_opt(
+        sched: Scheduler<Task>,
+        causal_ts: Option<Arc<dyn causal_ts::CausalTsProvider>>,
+    ) -> CdcObserver {
         CdcObserver {
             sched,
             observe_regions: Arc::default(),
             cmd_batches: RefCell::default(),
+            causal_ts,
         }
     }
 
@@ -98,6 +107,20 @@ impl CdcObserver {
             .unwrap()
             .get(&region_id)
             .cloned()
+    }
+
+    fn send_track_ts(&self, region_id: u64, key: Vec<u8>, track_ts: TimeStamp) -> Result<()> {
+        debug!("(rawkv)cdc::CdcObserver::send_track_ts schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "track_ts" => track_ts);
+        if let Err(e) = self.sched.schedule(Task::TrackTS {
+            region_id,
+            key,
+            ts: track_ts,
+        }) {
+            error!("(rawkv)cdc schedule cdc task failed"; "error" => ?e);
+            Err(Error::Other(box_err!("Schedule error: {:?}", e)))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -189,6 +212,19 @@ impl RegionChangeObserver for CdcObserver {
 }
 
 impl QueryObserver for CdcObserver {
+    fn pre_propose_barrier(&self, ctx: &mut ObserverContext<'_>) -> Result<()> {
+        let region_id = ctx.region().get_id();
+        if let (Some(_), Some(causal_ts)) = (self.is_subscribed(region_id), self.causal_ts.as_ref())
+        {
+            let key = region_id.to_be_bytes();
+            let lock_ts = causal_ts.get_ts().unwrap(); // error handle
+            debug!("(rawkv)cdc::CdcObserver::pre_propose_barrier"; "region_id" => region_id, "lock_ts" => ?lock_ts, "key" => &log_wrappers::Value::key(&key));
+            self.send_track_ts(region_id, key.to_vec(), lock_ts)
+        } else {
+            Ok(())
+        }
+    }
+
     fn pre_propose_query(
         &self,
         ctx: &mut ObserverContext<'_>,
@@ -196,31 +232,21 @@ impl QueryObserver for CdcObserver {
     ) -> Result<()> {
         // TODO(rawkv): check raw cdc
         // TODO(rawkv): timestamp in the region is increasing in a region.
-        //   So we can use a more simple structure in ts resolver (now is b tree).
+        //   So we can use a more simple structure in ts resolver (now is B-tree).
         let region_id = ctx.region().get_id();
-        let send_track_ts = |key: Vec<u8>, ts: TimeStamp| -> Result<()> {
-            // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
-            let track_ts = ts.prev();
-            debug!("(rawkv)cdc::CdcObserver::pre_propose_query schedule Task::TrackTS"; "region_id" => region_id, "key" => &log_wrappers::Value::key(&key), "ts" => track_ts);
-            if let Err(e) = self.sched.schedule(Task::TrackTS {
-                region_id,
-                key,
-                ts: track_ts,
-            }) {
-                error!("(rawkv)cdc schedule cdc task failed"; "error" => ?e);
-                Err(Error::Other(box_err!("Schedule error: {:?}", e)))
-            } else {
-                Ok(())
-            }
-        };
         if self.is_subscribed(region_id).is_some() {
             debug!("(rawkv)cdc::CdcObserver::pre_propose_query"; "region_id" => region_id, "req" => ?requests);
-
             for req in requests {
                 if req.has_put() {
                     if let Some(ts) = get_causal_ts(req.get_put().get_value()) {
-                        // track the first request. TS in batch is increasing.
-                        return send_track_ts(req.get_put().get_key().to_vec(), ts);
+                        // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
+                        let track_ts = ts.prev();
+                        // track the first request ONLY. TS in batch is increasing.
+                        return self.send_track_ts(
+                            region_id,
+                            req.get_put().get_key().to_vec(),
+                            track_ts,
+                        );
                     }
                 }
                 if req.has_delete() {

@@ -618,7 +618,7 @@ impl<ER: RaftEngine> TiKVServer<ER> {
         };
 
         // Register cdc.
-        let cdc_ob = cdc::CdcObserver::new(cdc_scheduler.clone());
+        let cdc_ob = cdc::CdcObserver::new_opt(cdc_scheduler.clone(), Some(causal_ts.clone()));
         cdc_ob.register_to(self.coprocessor_host.as_mut().unwrap());
         // Register cdc config.
         cfg_controller.register(

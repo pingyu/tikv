@@ -346,6 +346,10 @@ impl<E: KvEngine> CoprocessorHost<E> {
         CoprocessorHost { registry, cfg }
     }
 
+    pub fn pre_propose_barrier(&self, region: &Region) -> Result<()> {
+        try_loop_ob!(region, &self.registry.query_observers, pre_propose_barrier,)
+    }
+
     /// Call all propose hooks until bypass is set to true.
     pub fn pre_propose(&self, region: &Region, req: &mut RaftCmdRequest) -> Result<()> {
         if !req.has_admin_request() {

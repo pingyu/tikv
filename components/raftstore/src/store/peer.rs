@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{cmp, mem, u64, usize};
 
-use concurrency_manager::KeyHandleGuard;
 use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::TrySendError;
 use engine_traits::{Engines, KvEngine, RaftEngine, Snapshot, WriteBatch, WriteOptions};
@@ -2907,27 +2906,21 @@ where
     ) -> Result<ProposalContext> {
         {
             let t = TiInstant::now();
-            let metrics = vec![
-                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_1,
-                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_2,
-                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_3,
-                &mut poll_ctx.raft_metrics.pre_propose_coprocessor_4,
-            ];
-            let mut guards = Vec::<KeyHandleGuard>::new();
+            // let mut guards = Vec::<KeyHandleGuard>::new();
             if let Some(cb) = cb {
+                // TODO(rawkv): FIXME: will be deadlock if no rawkv data.
+                if let Callback::Write {
+                    pre_propose_cb: Some(_),
+                    ..
+                } = cb
+                {
+                    poll_ctx
+                        .coprocessor_host
+                        .pre_propose_barrier(self.region())?;
+                }
                 // must be invoked before coprocessor_host.pre_propose().
                 // to ensure observers get the latest values modified by calllback.
-                cb.invoke_pre_propose(
-                    req.mut_requests().as_mut_slice(),
-                    self.region_id,
-                    &mut guards,
-                    &metrics,
-                    t,
-                );
-                poll_ctx
-                    .raft_metrics
-                    .pre_propose_coprocessor_5
-                    .observe(t.saturating_elapsed_secs());
+                cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
             }
             poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
             poll_ctx

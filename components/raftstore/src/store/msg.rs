@@ -2,7 +2,6 @@
 
 use std::fmt;
 
-use concurrency_manager::KeyHandleGuard;
 use engine_traits::{CompactedEvent, KvEngine, Snapshot};
 use kvproto::import_sstpb::SstMeta;
 use kvproto::kvrpcpb::{ExtraOp as TxnExtraOp, LeaderInfo};
@@ -55,15 +54,7 @@ where
 pub type ReadCallback<S> = Box<dyn FnOnce(ReadResponse<S>) + Send>;
 pub type WriteCallback = Box<dyn FnOnce(WriteResponse) + Send>;
 pub type ExtCallback = Box<dyn FnOnce() + Send>;
-pub type RequestCallback = Box<
-    dyn FnOnce(
-        &mut [RaftPbRequest],
-        u64,
-        &mut Vec<KeyHandleGuard>,
-        &[&mut prometheus::local::LocalHistogram],
-        Instant,
-    ) + Send,
->;
+pub type RequestCallback = Box<dyn FnOnce(&mut [RaftPbRequest]) + Send>;
 
 /// Variants of callbacks for `Msg`.
 ///  - `Read`: a callback for read only requests including `StatusRequest`,
@@ -131,17 +122,10 @@ where
         }
     }
 
-    pub fn invoke_pre_propose(
-        &mut self,
-        reqs: &mut [RaftPbRequest],
-        region_id: u64,
-        guards: &mut Vec<KeyHandleGuard>,
-        metrics: &[&mut prometheus::local::LocalHistogram],
-        t: Instant,
-    ) {
+    pub fn invoke_pre_propose(&mut self, reqs: &mut [RaftPbRequest]) {
         if let Callback::Write { pre_propose_cb, .. } = self {
             if let Some(cb) = pre_propose_cb.take() {
-                cb(reqs, region_id, guards, metrics, t)
+                cb(reqs)
             }
         }
     }
