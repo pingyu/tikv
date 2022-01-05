@@ -31,6 +31,18 @@ use std::{
 };
 use txn_types::{Key, Lock, TimeStamp};
 
+#[derive(Clone)]
+pub struct RegionRawLockGuard {
+    region_id: u64,
+    cm: Arc<ConcurrencyManager>,
+}
+
+impl Drop for RegionRawLockGuard {
+    fn drop(&mut self) {
+        self.cm.region_raw_unlock(self.region_id);
+    }
+}
+
 // Pay attention that the async functions of ConcurrencyManager should not hold
 // the mutex.
 #[derive(Clone)]
@@ -127,10 +139,8 @@ impl ConcurrencyManager {
         });
 
         let min_raw_ts = self.regions_min_raw_lock_ts();
-        if let Some(lock_ts) = min_lock_ts {
-            if let Some(raw_ts) = min_raw_ts {
-                min_lock_ts = Some(std::cmp::min(raw_ts, lock_ts));
-            }
+        if let (Some(lock_ts), Some(raw_ts)) = (min_lock_ts, min_raw_ts) {
+            min_lock_ts = Some(std::cmp::min(raw_ts, lock_ts));
         } else {
             min_lock_ts = min_raw_ts
         }
@@ -139,18 +149,39 @@ impl ConcurrencyManager {
     }
 
     pub fn region_raw_lock(&self, region_id: u64, lock_ts: TimeStamp) -> TimeStamp {
-        let mut old_value = 0;
-        let lock = self.regions_raw_lock.rl();
-        if let Some(ts) = lock.get(&region_id) {
+        let old_value;
+        let rl = self.regions_raw_lock.rl();
+        if let Some(ts) = rl.get(&region_id) {
             old_value = ts.swap(lock_ts.into_inner(), Ordering::Release);
+            if old_value != 0 {
+                error!("ConcurrencyManager::region_raw_lock conflict"; "region" => region_id, "lock_ts" => ?lock_ts, "old_value" => old_value);
+            }
         } else {
-            drop(lock);
-            self.regions_raw_lock
-                .wl()
-                .insert(region_id, AtomicU64::new(lock_ts.into_inner()));
+            drop(rl);
+            let mut wl = self.regions_raw_lock.wl();
+            let ts = wl.entry(region_id).or_insert_with(|| AtomicU64::new(0));
+            old_value = ts.swap(lock_ts.into_inner(), Ordering::Release);
+            if old_value != 0 {
+                error!("ConcurrencyManager::region_raw_lock conflict"; "region" => region_id, "lock_ts" => ?lock_ts, "old_value" => old_value);
+            }
         }
         debug!("ConcurrencyManager::region_raw_lock"; "region" => region_id, "lock_ts" => ?lock_ts, "old_value" => old_value);
         TimeStamp::from(old_value)
+    }
+
+    pub fn region_raw_lock_with_guard(
+        &self,
+        region_id: u64,
+        lock_ts: TimeStamp,
+    ) -> (TimeStamp, RegionRawLockGuard) {
+        let old_value = self.region_raw_lock(region_id, lock_ts);
+        (
+            old_value,
+            RegionRawLockGuard {
+                region_id,
+                cm: Arc::new(self.clone()),
+            },
+        )
     }
 
     pub fn region_raw_unlock(&self, region_id: u64) -> TimeStamp {
@@ -166,10 +197,8 @@ impl ConcurrencyManager {
         let mut min_lock_ts = None;
         for (_, ts) in self.regions_raw_lock.rl().iter() {
             let curr_ts = ts.load(Ordering::Acquire);
-            if curr_ts > 0 {
-                if min_lock_ts.map(|ts| ts > curr_ts).unwrap_or(true) {
-                    min_lock_ts = Some(curr_ts);
-                }
+            if curr_ts > 0 && min_lock_ts.map(|ts| ts > curr_ts).unwrap_or(true) {
+                min_lock_ts = Some(curr_ts);
             }
         }
         debug!(
@@ -261,10 +290,23 @@ mod tests {
         assert_eq!(cm.region_raw_unlock(2), 100.into());
         assert_eq!(cm.global_min_lock_ts(), Some(110.into()));
 
-        assert_eq!(cm.region_raw_lock(1, 120.into()), 110.into());
+        assert_eq!(cm.region_raw_lock(1, 120.into()), 110.into()); // wrong usage
         assert_eq!(cm.global_min_lock_ts(), Some(120.into()));
 
         assert_eq!(cm.region_raw_unlock(1), 120.into());
+        assert_eq!(cm.global_min_lock_ts(), None);
+    }
+
+    #[tokio::test]
+    async fn test_raw_lock_guards() {
+        let cm = ConcurrencyManager::new(1.into());
+        assert_eq!(cm.global_min_lock_ts(), None);
+
+        {
+            let (old_value, _guard) = cm.region_raw_lock_with_guard(2, 100.into());
+            assert_eq!(old_value, 0.into());
+            assert_eq!(cm.global_min_lock_ts(), Some(100.into()));
+        }
         assert_eq!(cm.global_min_lock_ts(), None);
     }
 }

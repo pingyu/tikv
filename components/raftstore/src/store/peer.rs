@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use std::{cmp, mem, u64, usize};
 
-use concurrency_manager::KeyHandleGuard;
+use concurrency_manager::RegionRawLockGuard;
 use crossbeam::atomic::AtomicCell;
 use crossbeam::channel::TrySendError;
 use engine_traits::{Engines, KvEngine, RaftEngine, Snapshot, WriteBatch, WriteOptions};
@@ -2906,18 +2906,24 @@ where
         cb: Option<&mut Callback<EK::Snapshot>>,
     ) -> Result<ProposalContext> {
         {
-            let t = TiInstant::now_coarse();
+            let t = TiInstant::now();
             let metrics = vec![
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_1,
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_2,
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_3,
                 &mut poll_ctx.raft_metrics.pre_propose_coprocessor_4,
             ];
-            let mut guards = Vec::<KeyHandleGuard>::new();
+            let mut guards = Vec::<RegionRawLockGuard>::new();
             if let Some(cb) = cb {
                 // must be invoked before coprocessor_host.pre_propose().
                 // to ensure observers get the latest values modified by calllback.
-                cb.invoke_pre_propose(req.mut_requests().as_mut_slice(), &mut guards, &metrics, t);
+                cb.invoke_pre_propose(
+                    req.mut_requests().as_mut_slice(),
+                    self.region_id,
+                    &mut guards,
+                    &metrics,
+                    t,
+                );
                 poll_ctx
                     .raft_metrics
                     .pre_propose_coprocessor_5

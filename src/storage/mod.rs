@@ -70,13 +70,13 @@ use crate::storage::{
     kv::{with_tls_engine, Modify, WriteData},
     lock_manager::{DummyLockManager, LockManager},
     metrics::*,
-    mvcc::{metrics::CONCURRENCY_MANAGER_LOCK_DURATION_HISTOGRAM, PointGetterBuilder},
+    mvcc::PointGetterBuilder,
     raw::ttl::convert_to_expire_ts,
     txn::{commands::TypedCommand, scheduler::Scheduler as TxnScheduler, Command},
     types::StorageCallbackType,
 };
 use causal_ts::{CausalTsProvider, TsoSimpleProvider};
-use concurrency_manager::{ConcurrencyManager, KeyHandleGuard};
+use concurrency_manager::{ConcurrencyManager, RegionRawLockGuard};
 use engine_traits::{util::emplace_causal_ts, CfName, ALL_CFS, CF_DEFAULT, DATA_CFS};
 use futures::prelude::*;
 use kvproto::kvrpcpb::{
@@ -1209,7 +1209,8 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         let cm = self.concurrency_manager.clone();
         let pre_propose_cb = Box::new(
             move |reqs: &mut [RaftPbRequest],
-                  guards: &mut Vec<KeyHandleGuard>,
+                  region_id: u64,
+                  guards: &mut Vec<RegionRawLockGuard>,
                   metrics: &[&mut prometheus::local::LocalHistogram],
                   t: Instant| {
                 let (m1, m2, m3, m4) = (&metrics[0], &metrics[1], &metrics[2], &metrics[3]);
@@ -1223,38 +1224,19 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
                             //   `cdc::Endpoint::register_min_ts_event`
                             //   `prewrite::async_commit_timestamp`
                             // TODO(rawkv): get a better solution.
-                            let t1 = Instant::now_coarse();
-                            let key = Key::from_encoded(key.to_vec()); // Treat `key` as use encoded (memory comparable) key, which doesn't affect the correctness of `lock_key`.
-                            let key_guard = CONCURRENCY_MANAGER_LOCK_DURATION_HISTOGRAM
-                                .observe_closure_duration(|| {
-                                    ::futures_executor::block_on(cm.lock_key(&key))
-                                });
+                            let t1 = Instant::now();
+                            let lock_ts = causal_ts.get_ts()?;
+                            let (_, guard) = cm.region_raw_lock_with_guard(region_id, lock_ts);
                             m1.observe(t1.saturating_elapsed_secs());
-                            let ts = key_guard.with_lock(|l| -> Result<TimeStamp> {
-                                let max_ts = cm.max_ts();
-                                causal_ts.advance(max_ts.next())?;
 
-                                let ts = causal_ts.get_ts()?;
-                                m2.observe(t.saturating_elapsed_secs());
-                                // resolved_ts should be smaller than commit_ts, so use ts.prev() here.
-                                let lock_ts = ts.prev();
+                            let max_ts = cm.max_ts();
+                            causal_ts.advance(max_ts.next())?;
+                            let ts = causal_ts.get_ts()?;
+                            m2.observe(t.saturating_elapsed_secs());
 
-                                let lock = Some(txn_types::Lock::new(
-                                    txn_types::LockType::Put,
-                                    key.into_encoded(), // TODO(rawkv): can be empty ?
-                                    lock_ts,
-                                    0,
-                                    None,
-                                    0.into(),
-                                    1,
-                                    ts,
-                                ));
-                                debug!("(rawkv)raw_put::pre_propose_cb"; "cm.max_ts" => max_ts, "commit_ts" => ts, "lock_ts" => lock_ts, "lock" => ?lock);
-                                *l = lock;
-                                Ok(ts)
-                            })?;
+                            debug!("(rawkv)raw_put::pre_propose_cb"; "cm.max_ts" => max_ts, "commit_ts" => ts, "lock_ts" => lock_ts, "key" => &log_wrappers::Value::key(key));
                             m3.observe(t.saturating_elapsed_secs());
-                            guards.push(key_guard);
+                            guards.push(guard);
                             Ok(ts)
                         } else {
                             Ok(causal_ts.get_ts()?)

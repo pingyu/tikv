@@ -245,7 +245,7 @@ lazy_static! {
             "tikv_raftstore_coprocessor_duration_seconds",
             "Bucketed histogram of coprocessor duration.",
             &["type"],
-            exponential_buckets(0.0005, 2.0, 20).unwrap()
+            exponential_buckets(1e-6, 2.0, 20).unwrap() // 1us ~ 1s
         ).unwrap();
 
     pub static ref STORE_APPLY_LOG_HISTOGRAM: Histogram =
