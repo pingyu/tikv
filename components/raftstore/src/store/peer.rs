@@ -778,7 +778,7 @@ where
     /// 3. Notify all pending requests.
     pub fn destroy<T>(&mut self, ctx: &PollContext<EK, ER, T>, keep_data: bool) -> Result<()> {
         fail_point!("raft_store_skip_destroy_peer", |_| Ok(()));
-        let t = TiInstant::now();
+        let t_begin = TiInstant::now();
 
         let region = self.region().clone();
         info!(
@@ -791,17 +791,24 @@ where
         let mut kv_wb = ctx.engines.kv.write_batch();
         let mut raft_wb = ctx.engines.raft.log_batch(1024);
         self.mut_store().clear_meta(&mut kv_wb, &mut raft_wb)?;
+        let t_clear_meta = TiInstant::now();
+
         write_peer_state(
             &mut kv_wb,
             &region,
             PeerState::Tombstone,
             self.pending_merge_state.clone(),
         )?;
+        let t_write_state = TiInstant::now();
+
         // write kv rocksdb first in case of restart happen between two write
         let mut write_opts = WriteOptions::new();
         write_opts.set_sync(true);
         kv_wb.write_opt(&write_opts)?;
+        let t_write_kv = TiInstant::now();
+
         ctx.engines.raft.consume(&mut raft_wb, true)?;
+        let t_write_raft = TiInstant::now();
 
         if self.get_store().is_initialized() && !keep_data {
             // If we meet panic when deleting data and raft log, the dirty data
@@ -814,6 +821,7 @@ where
                 );
             }
         }
+        let t_clear_store = TiInstant::now();
 
         self.pending_reads.clear_all(Some(region.get_id()));
 
@@ -821,11 +829,19 @@ where
             apply::notify_req_region_removed(region.get_id(), cb);
         }
 
+        let t_end = TiInstant::now();
+
         info!(
             "peer destroy itself";
             "region_id" => self.region_id,
             "peer_id" => self.peer.get_id(),
-            "takes" => ?t.saturating_elapsed(),
+            "takes" => ?t_end.saturating_duration_since(t_begin),
+            "clear_meta_takes" => ?t_clear_meta.saturating_duration_since(t_begin),
+            "write_state_takes" => ?t_write_state.saturating_duration_since(t_clear_meta),
+            "write_kv_takes" => ?t_write_kv.saturating_duration_since(t_write_state),
+            "write_raft_takes" => ?t_write_raft.saturating_duration_since(t_write_kv),
+            "clear_store_takes" => ?t_clear_store.saturating_duration_since(t_write_raft),
+            "notify_takes" => ?t_end.saturating_duration_since(t_clear_store),
         );
 
         Ok(())
