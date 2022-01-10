@@ -323,6 +323,13 @@ where
     }
 }
 
+use prometheus::local::LocalHistogram;
+pub struct CoprocessorHostMetrics<'a> {
+    pub on_apply_cmd_1: &'a mut LocalHistogram,
+    pub on_apply_cmd_2: &'a mut LocalHistogram,
+    pub on_apply_cmd_3: &'a mut LocalHistogram,
+}
+
 impl<E: KvEngine> CoprocessorHost<E> {
     pub fn new<C: CasualRouter<E> + Clone + Send + 'static>(
         ch: C,
@@ -521,11 +528,22 @@ impl<E: KvEngine> CoprocessorHost<E> {
         }
     }
 
-    pub fn on_apply_cmd(&self, observe_cmd: Option<&ObserveCmd>, region_id: u64, cmd: Cmd) {
+    pub fn on_apply_cmd(
+        &self,
+        observe_cmd: Option<&ObserveCmd>,
+        region_id: u64,
+        cmd: Cmd,
+        t: &Option<tikv_util::time::Instant>,
+        metrics: Option<&mut CoprocessorHostMetrics>,
+    ) {
         for ob in &self.registry.global_cmd_observers {
             ob.observer
                 .inner()
                 .on_apply_cmd(ObserveID::zero(), region_id, cmd.clone());
+        }
+
+        if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+            metrics.on_apply_cmd_1.observe(t.saturating_elapsed_secs());
         }
 
         if let Some(observe_cmd) = observe_cmd {
@@ -543,13 +561,19 @@ impl<E: KvEngine> CoprocessorHost<E> {
                     .inner()
                     .on_apply_cmd(observe_id, region_id, cmd.clone())
             }
+            if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+                metrics.on_apply_cmd_2.observe(t.saturating_elapsed_secs());
+            }
             self.registry
                 .cmd_observers
                 .last()
                 .unwrap()
                 .observer
                 .inner()
-                .on_apply_cmd(observe_id, region_id, cmd)
+                .on_apply_cmd(observe_id, region_id, cmd);
+            if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+                metrics.on_apply_cmd_3.observe(t.saturating_elapsed_secs());
+            }
         }
     }
 
@@ -792,10 +816,13 @@ mod tests {
         let observe_cmd = ObserveCmd { id: observe_id };
         host.prepare_for_apply(Some(&observe_cmd), 0);
         assert_all!(&[&ob.called], &[66]);
+        let t = None;
         host.on_apply_cmd(
             Some(&observe_cmd),
             0,
             Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
+            &t,
+            None,
         );
         assert_all!(&[&ob.called], &[78]);
         host.on_flush_apply(PanicEngine);

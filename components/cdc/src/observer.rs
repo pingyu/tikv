@@ -36,6 +36,7 @@ pub struct CdcObserver {
     observe_regions: Arc<RwLock<HashMap<u64, ObserveID>>>,
     cmd_batches: RefCell<Vec<CmdBatch>>,
     causal_ts: Option<Arc<dyn causal_ts::CausalTsProvider>>,
+    cdc_metrics: crate::metrics::CdcLocalMetrics,
 }
 
 impl CdcObserver {
@@ -56,6 +57,7 @@ impl CdcObserver {
             observe_regions: Arc::default(),
             cmd_batches: RefCell::default(),
             causal_ts,
+            cdc_metrics: crate::metrics::CdcLocalMetrics::default(),
         }
     }
 
@@ -134,12 +136,17 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
     }
 
     fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+        let t = tikv_util::time::Instant::now();
         debug!("(rawkv)CdcObserver::on_apply_cmd"; "region_id" => region_id, "cmd" => ?cmd);
         self.cmd_batches
             .borrow_mut()
             .last_mut()
             .expect("should exist some cmd batch")
             .push(observe_id, region_id, cmd);
+
+        self.cdc_metrics
+            .on_apply_cmd
+            .observe(t.saturating_elapsed_secs());
     }
 
     fn on_flush_apply(&self, engine: E) {
@@ -163,6 +170,8 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
                 warn!("cdc schedule task failed"; "error" => ?e);
             }
         }
+
+        self.cdc_metrics.flush();
     }
 }
 

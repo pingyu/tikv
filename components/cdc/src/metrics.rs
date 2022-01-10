@@ -116,4 +116,32 @@ lazy_static! {
         &["type"]
     )
     .unwrap();
+    pub static ref CDC_OBSERVER_DURATION: HistogramVec = register_histogram_vec!(
+        "tikv_cdc_observer_duration_seconds",
+        "Bucketed histogram of cdc observer duration.",
+        &["type"],
+        exponential_buckets(1e-7, 2.0, 20).unwrap() // 100ns ~ 100ms
+    )
+    .unwrap();
+}
+
+#[derive(Clone)]
+pub struct CdcLocalMetrics {
+    pub on_apply_cmd: local::LocalHistogram,
+}
+
+impl Default for CdcLocalMetrics {
+    fn default() -> Self {
+        Self {
+            on_apply_cmd: CDC_OBSERVER_DURATION
+                .with_label_values(&["on_apply_cmd"])
+                .local(),
+        }
+    }
+}
+
+impl CdcLocalMetrics {
+    pub fn flush(&self) {
+        self.on_apply_cmd.flush();
+    }
 }

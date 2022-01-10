@@ -51,7 +51,7 @@ use tikv_util::{Either, MustConsumeVec};
 use time::Timespec;
 use uuid::Builder as UuidBuilder;
 
-use crate::coprocessor::{Cmd, CoprocessorHost};
+use crate::coprocessor::{dispatcher::CoprocessorHostMetrics, Cmd, CoprocessorHost};
 use crate::store::fsm::RaftPollerBuilder;
 use crate::store::local_metrics::CoprocessorMetrics;
 use crate::store::metrics::*;
@@ -1104,9 +1104,18 @@ where
         } else {
             None
         };
-        apply_ctx
-            .host
-            .on_apply_cmd(self.observe_cmd.as_ref(), self.region_id(), cmd.clone());
+        let mut metrics = CoprocessorHostMetrics {
+            on_apply_cmd_1: &mut apply_ctx.coprocessor_metrics.on_apply_cmd_1,
+            on_apply_cmd_2: &mut apply_ctx.coprocessor_metrics.on_apply_cmd_2,
+            on_apply_cmd_3: &mut apply_ctx.coprocessor_metrics.on_apply_cmd_3,
+        };
+        apply_ctx.host.on_apply_cmd(
+            self.observe_cmd.as_ref(),
+            self.region_id(),
+            cmd.clone(),
+            &t,
+            Some(&mut metrics),
+        );
         if let Some(t) = t {
             apply_ctx
                 .coprocessor_metrics
