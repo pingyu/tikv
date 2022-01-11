@@ -55,12 +55,30 @@ impl ExtendedFields {
         }
     }
 
+    #[inline]
+    fn flag_has_causal_ts(flag: u8) -> bool {
+        flag & 0x1 != 0
+    }
+
+    #[inline]
+    fn flag_is_deleted(flag: u8) -> bool {
+        (flag & 0x1 << 1) != 0
+    }
+
+    #[inline]
+    fn parse_expire_ts(expire_ts_raw: u64) -> (u64, bool) {
+        (
+            expire_ts_raw & !(0x1_u64 << 63),
+            expire_ts_raw & 0x1_u64 << 63 != 0,
+        )
+    }
+
     pub fn expire_ts(&self) -> u64 {
         self.expire_ts
     }
 
     pub fn is_deleted(&self) -> bool {
-        (self.flag & 0x1 << 1) != 0
+        Self::flag_is_deleted(self.flag)
     }
 
     pub fn causal_ts(&self) -> Option<TimeStamp> {
@@ -72,7 +90,7 @@ impl ExtendedFields {
             value.encode_u64(causal_ts.into_inner()).unwrap();
         }
         value.write_u8(self.flag).unwrap();
-        value.encode_u64(self.expire_ts | 0x1_u64 << 63).unwrap(); // must be the last to keep compatible.
+        value.encode_u64(self.expire_ts | 0x1_u64 << 63).unwrap(); // `expire_ts` must be the last to keep compatibility.
     }
 
     pub fn extract(value_with_extended: &[u8]) -> Result<(ExtendedFields, usize, Option<usize>)> {
@@ -84,13 +102,12 @@ impl ExtendedFields {
             return Err(Error::Codec(codec::Error::ValueLength));
         }
         let mut data = &value_with_extended[len - number::U64_SIZE..];
-        extended.expire_ts = number::decode_u64(&mut data)?;
+        let (expire_ts, extended_bit) = Self::parse_expire_ts(number::decode_u64(&mut data)?);
         len -= number::U64_SIZE;
+        extended.expire_ts = expire_ts;
 
         // flag
-        if extended.expire_ts & 0x1_u64 << 63 != 0 {
-            extended.expire_ts &= !(0x1_u64 << 63);
-
+        if extended_bit {
             if len < number::U8_SIZE {
                 return Err(Error::Codec(codec::Error::ValueLength));
             }
@@ -101,7 +118,7 @@ impl ExtendedFields {
 
         // causal_ts
         let mut causal_ts_idx = None;
-        if extended.flag & 0x1 != 0 {
+        if Self::flag_has_causal_ts(extended.flag) {
             if len < number::U64_SIZE {
                 return Err(Error::Codec(codec::Error::ValueLength));
             }
@@ -112,6 +129,50 @@ impl ExtendedFields {
         }
 
         Ok((extended, len, causal_ts_idx))
+    }
+
+    pub fn extract_value(
+        mut value_with_extended: Vec<u8>,
+        current_ts: u64,
+    ) -> Result<Option<Vec<u8>>> {
+        let mut len = value_with_extended.len();
+
+        // expire_ts
+        if len < number::U64_SIZE {
+            return Err(Error::Codec(codec::Error::ValueLength));
+        }
+        let mut data = &value_with_extended[len - number::U64_SIZE..];
+        let (expire_ts, extended_bit) = Self::parse_expire_ts(number::decode_u64(&mut data)?);
+        len -= number::U64_SIZE;
+
+        if expire_ts != 0 && expire_ts <= current_ts {
+            return Ok(None);
+        }
+
+        if extended_bit {
+            if len < number::U8_SIZE {
+                return Err(Error::Codec(codec::Error::ValueLength));
+            }
+            let mut data = &value_with_extended[len - number::U8_SIZE..];
+            let flag = data.read_u8()?;
+            len -= number::U8_SIZE;
+
+            // delete flag
+            if Self::flag_is_deleted(flag) {
+                return Ok(None);
+            }
+
+            // causal_ts
+            if Self::flag_has_causal_ts(flag) {
+                if len < number::U64_SIZE {
+                    return Err(Error::Codec(codec::Error::ValueLength));
+                }
+                len -= number::U64_SIZE;
+            }
+        }
+
+        value_with_extended.truncate(len);
+        Ok(Some(value_with_extended))
     }
 }
 
@@ -232,6 +293,12 @@ mod tests {
             let (e, _, _) = ExtendedFields::extract(&value).unwrap();
             assert_eq!(e, ExtendedFields::new(100, false, None));
             assert_eq!(position_of_causal_ts(&value), None);
+
+            let res = ExtendedFields::extract_value(value.clone(), 0).unwrap();
+            assert_eq!(res, Some(b"value".to_vec()));
+
+            let res = ExtendedFields::extract_value(value, 100).unwrap();
+            assert_eq!(res, None);
         }
 
         {
@@ -242,6 +309,9 @@ mod tests {
             assert_eq!(get_expire_ts(&value).unwrap(), 100);
             assert_eq!(strip_extended_fields(&value), b"value");
             assert_eq!(position_of_causal_ts(&value), Some(5));
+
+            let res = ExtendedFields::extract_value(value.clone(), 0).unwrap();
+            assert_eq!(res, None);
 
             truncate_extended_fields(&mut value).unwrap();
             assert_eq!(value, b"value".to_vec());

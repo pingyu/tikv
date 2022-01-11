@@ -362,6 +362,7 @@ pub struct RaftMetrics {
     pub leader_missing: Arc<Mutex<HashSet<u64>>>,
     pub invalid_proposal: RaftInvalidProposeMetrics,
     pub pre_propose_coprocessor: LocalHistogram,
+    pub pre_propose_coprocessor_1: LocalHistogram,
 }
 
 impl Default for RaftMetrics {
@@ -381,6 +382,9 @@ impl Default for RaftMetrics {
             pre_propose_coprocessor: COPROCESSOR_DURATION
                 .with_label_values(&["on_pre_propose"])
                 .local(),
+            pre_propose_coprocessor_1: COPROCESSOR_DURATION
+                .with_label_values(&["on_pre_propose_1"])
+                .local(),
         }
     }
 }
@@ -397,6 +401,7 @@ impl RaftMetrics {
         self.message_dropped.flush();
         self.invalid_proposal.flush();
         self.pre_propose_coprocessor.flush();
+        self.pre_propose_coprocessor_1.flush();
         let mut missing = self.leader_missing.lock().unwrap();
         LEADER_MISSING.set(missing.len() as i64);
         missing.clear();
@@ -409,6 +414,14 @@ pub struct CoprocessorMetrics {
     pub on_prepare_apply: LocalHistogram,
     pub on_apply_cmd: LocalHistogram,
     pub on_flush_apply: LocalHistogram,
+
+    pub on_apply_cmd_1: LocalHistogram,
+    pub on_apply_cmd_2: LocalHistogram,
+    pub on_apply_cmd_3: LocalHistogram,
+
+    pub on_flush_apply_1: LocalHistogram,
+    pub on_flush_apply_2: LocalHistogram,
+    pub on_flush_apply_3: LocalHistogram,
 }
 
 impl Default for CoprocessorMetrics {
@@ -426,6 +439,26 @@ impl Default for CoprocessorMetrics {
             on_flush_apply: COPROCESSOR_DURATION
                 .with_label_values(&["on_flush_apply"])
                 .local(),
+
+            on_apply_cmd_1: COPROCESSOR_DURATION
+                .with_label_values(&["on_apply_cmd_1"])
+                .local(),
+            on_apply_cmd_2: COPROCESSOR_DURATION
+                .with_label_values(&["on_apply_cmd_2"])
+                .local(),
+            on_apply_cmd_3: COPROCESSOR_DURATION
+                .with_label_values(&["on_apply_cmd_3"])
+                .local(),
+
+            on_flush_apply_1: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_1"])
+                .local(),
+            on_flush_apply_2: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_2"])
+                .local(),
+            on_flush_apply_3: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_3"])
+                .local(),
         }
     }
 }
@@ -436,5 +469,13 @@ impl CoprocessorMetrics {
         self.on_prepare_apply.flush();
         self.on_apply_cmd.flush();
         self.on_flush_apply.flush();
+
+        self.on_apply_cmd_1.flush();
+        self.on_apply_cmd_2.flush();
+        self.on_apply_cmd_3.flush();
+
+        self.on_flush_apply_1.flush();
+        self.on_flush_apply_2.flush();
+        self.on_flush_apply_3.flush();
     }
 }

@@ -36,6 +36,7 @@ pub struct CdcObserver {
     observe_regions: Arc<RwLock<HashMap<u64, ObserveID>>>,
     cmd_batches: RefCell<Vec<CmdBatch>>,
     causal_ts: Option<Arc<dyn causal_ts::CausalTsProvider>>,
+    cdc_metrics: crate::metrics::CdcLocalMetrics,
 }
 
 impl CdcObserver {
@@ -56,6 +57,7 @@ impl CdcObserver {
             observe_regions: Arc::default(),
             cmd_batches: RefCell::default(),
             causal_ts,
+            cdc_metrics: crate::metrics::CdcLocalMetrics::default(),
         }
     }
 
@@ -133,36 +135,45 @@ impl<E: KvEngine> CmdObserver<E> for CdcObserver {
             .push(CmdBatch::new(observe_id, region_id));
     }
 
-    fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+    fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: &Cmd) {
         debug!("(rawkv)CdcObserver::on_apply_cmd"; "region_id" => region_id, "cmd" => ?cmd);
         self.cmd_batches
             .borrow_mut()
             .last_mut()
             .expect("should exist some cmd batch")
-            .push(observe_id, region_id, cmd);
+            .push(observe_id, region_id, cmd.clone());
     }
 
-    fn on_flush_apply(&self, engine: E) {
+    fn on_flush_apply(&self, engine: Option<E>) {
         debug!("(rawkv)CdcObserver::on_flush_apply"; "cmd_batches" => ?self.cmd_batches.borrow());
         fail_point!("before_cdc_flush_apply");
         if !self.cmd_batches.borrow().is_empty() {
             let batches = self.cmd_batches.replace(Vec::default());
-            let mut region = Region::default();
-            region.mut_peers().push(Peer::default());
-            // Create a snapshot here for preventing the old value was GC-ed.
-            let snapshot =
-                RegionSnapshot::from_snapshot(Arc::new(engine.snapshot()), Arc::new(region));
-            let reader = OldValueReader::new(snapshot);
-            let get_old_value = move |key, query_ts, old_value_cache: &mut OldValueCache| {
-                old_value::get_old_value(&reader, key, query_ts, old_value_cache)
-            };
+            let get_old_value: old_value::OldValueCallback;
+            if let Some(engine) = engine {
+                let mut region = Region::default();
+                region.mut_peers().push(Peer::default());
+                // Create a snapshot here for preventing the old value was GC-ed.
+                let snapshot =
+                    RegionSnapshot::from_snapshot(Arc::new(engine.snapshot()), Arc::new(region));
+                let reader = OldValueReader::new(snapshot);
+                get_old_value =
+                    Box::new(move |key, query_ts, old_value_cache: &mut OldValueCache| {
+                        old_value::get_old_value(&reader, key, query_ts, old_value_cache)
+                    });
+            } else {
+                get_old_value = Box::new(move |_, _, _| (None, None));
+            }
+
             if let Err(e) = self.sched.schedule(Task::MultiBatch {
                 multi: batches,
-                old_value_cb: Box::new(get_old_value),
+                old_value_cb: get_old_value,
             }) {
                 warn!("cdc schedule task failed"; "error" => ?e);
             }
         }
+
+        // self.cdc_metrics.flush();
     }
 }
 
@@ -282,9 +293,9 @@ mod tests {
             &observer,
             observe_id,
             0,
-            Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
+            &Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
         );
-        observer.on_flush_apply(engine);
+        observer.on_flush_apply(Some(engine));
 
         match rx.recv_timeout(Duration::from_millis(10)).unwrap().unwrap() {
             Task::MultiBatch { multi, .. } => {
