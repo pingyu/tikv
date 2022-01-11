@@ -532,19 +532,19 @@ impl<E: KvEngine> CoprocessorHost<E> {
         &self,
         observe_cmd: Option<&ObserveCmd>,
         region_id: u64,
-        cmd: Cmd,
-        t: &Option<tikv_util::time::Instant>,
-        metrics: Option<&mut CoprocessorHostMetrics>,
+        cmd: &Cmd,
+        _t: &Option<tikv_util::time::Instant>,
+        _metrics: Option<&mut CoprocessorHostMetrics>,
     ) {
         for ob in &self.registry.global_cmd_observers {
             ob.observer
                 .inner()
-                .on_apply_cmd(ObserveID::zero(), region_id, cmd.clone());
+                .on_apply_cmd(ObserveID::zero(), region_id, cmd);
         }
 
-        if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
-            metrics.on_apply_cmd_1.observe(t.saturating_elapsed_secs());
-        }
+        // if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+        //     metrics.on_apply_cmd_1.observe(t.saturating_elapsed_secs());
+        // }
 
         if let Some(observe_cmd) = observe_cmd {
             let observe_id = observe_cmd.id;
@@ -559,11 +559,11 @@ impl<E: KvEngine> CoprocessorHost<E> {
                     .unwrap()
                     .observer
                     .inner()
-                    .on_apply_cmd(observe_id, region_id, cmd.clone())
+                    .on_apply_cmd(observe_id, region_id, cmd)
             }
-            if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
-                metrics.on_apply_cmd_2.observe(t.saturating_elapsed_secs());
-            }
+            // if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+            //     metrics.on_apply_cmd_2.observe(t.saturating_elapsed_secs());
+            // }
             self.registry
                 .cmd_observers
                 .last()
@@ -571,16 +571,16 @@ impl<E: KvEngine> CoprocessorHost<E> {
                 .observer
                 .inner()
                 .on_apply_cmd(observe_id, region_id, cmd);
-            if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
-                metrics.on_apply_cmd_3.observe(t.saturating_elapsed_secs());
-            }
+            // if let (Some(t), Some(metrics)) = (t, metrics.as_ref()) {
+            //     metrics.on_apply_cmd_3.observe(t.saturating_elapsed_secs());
+            // }
         }
     }
 
-    pub fn on_flush_apply(&self, engine: E) {
-        for ob in &self.registry.global_cmd_observers {
-            ob.observer.inner().on_flush_apply(engine.clone());
-        }
+    pub fn on_flush_apply(&self, engine: Option<E>) {
+        // for ob in &self.registry.global_cmd_observers {
+        //     ob.observer.inner().on_flush_apply(engine.clone());
+        // }
 
         if self.registry.cmd_observers.is_empty() {
             return;
@@ -740,10 +740,10 @@ mod tests {
         fn on_prepare_for_apply(&self, _: ObserveID, _: u64) {
             self.called.fetch_add(11, Ordering::SeqCst);
         }
-        fn on_apply_cmd(&self, _: ObserveID, _: u64, _: Cmd) {
+        fn on_apply_cmd(&self, _: ObserveID, _: u64, _: &Cmd) {
             self.called.fetch_add(12, Ordering::SeqCst);
         }
-        fn on_flush_apply(&self, _: PanicEngine) {
+        fn on_flush_apply(&self, _: Option<PanicEngine>) {
             self.called.fetch_add(13, Ordering::SeqCst);
         }
     }
@@ -820,12 +820,12 @@ mod tests {
         host.on_apply_cmd(
             Some(&observe_cmd),
             0,
-            Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
+            &Cmd::new(0, RaftCmdRequest::default(), RaftCmdResponse::default()),
             &t,
             None,
         );
         assert_all!(&[&ob.called], &[78]);
-        host.on_flush_apply(PanicEngine);
+        host.on_flush_apply(Some(PanicEngine));
         assert_all!(&[&ob.called], &[91]);
     }
 

@@ -36,23 +36,25 @@ impl<E: KvEngine> CmdObserver<E> for ChangeDataObserver<E> {
             .push(CmdBatch::new(observe_id, region_id));
     }
 
-    fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+    fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: &Cmd) {
         self.cmd_batches
             .borrow_mut()
             .last_mut()
             .unwrap_or_else(|| panic!("region {} should exist some cmd batch", region_id))
-            .push(observe_id, region_id, cmd);
+            .push(observe_id, region_id, cmd.clone());
     }
 
-    fn on_flush_apply(&self, engine: E) {
+    fn on_flush_apply(&self, engine: Option<E>) {
         if !self.cmd_batches.borrow().is_empty() {
             let batches = self.cmd_batches.replace(Vec::default());
             let mut region = Region::default();
             region.mut_peers().push(Peer::default());
             // Create a snapshot here for preventing the old value was GC-ed.
             // TODO: only need it after enabling old value, may add a flag to indicate whether to get it.
-            let snapshot =
-                RegionSnapshot::from_snapshot(Arc::new(engine.snapshot()), Arc::new(region));
+            let snapshot = RegionSnapshot::from_snapshot(
+                Arc::new(engine.unwrap().snapshot()),
+                Arc::new(region),
+            );
             if let Err(e) = self.scheduler.schedule(Task::ChangeLog {
                 cmd_batch: batches,
                 snapshot,

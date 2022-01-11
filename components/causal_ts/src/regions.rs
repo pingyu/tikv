@@ -13,7 +13,6 @@ use raftstore::coprocessor::{
 use raftstore::store::fsm::ObserveID;
 use txn_types::TimeStamp;
 
-use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
 
 use crate::CausalTsProvider;
@@ -63,7 +62,6 @@ impl RegionsCausalManager {
 #[derive(Clone)]
 pub struct CausalObserver {
     causal_manager: Arc<RegionsCausalManager>,
-    regions_map: RefCell<RegionsMap>,
     causal_ts: Arc<dyn CausalTsProvider>,
 }
 
@@ -76,7 +74,6 @@ impl CausalObserver {
     ) -> CausalObserver {
         CausalObserver {
             causal_manager,
-            regions_map: RefCell::new(RegionsMap::default()),
             causal_ts,
         }
     }
@@ -101,31 +98,21 @@ impl Coprocessor for CausalObserver {}
 impl<E: KvEngine> CmdObserver<E> for CausalObserver {
     fn on_prepare_for_apply(&self, _observe_id: ObserveID, _region_id: u64) {}
 
-    fn on_apply_cmd(&self, _observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+    fn on_apply_cmd(&self, _observe_id: ObserveID, region_id: u64, cmd: &Cmd) {
         debug!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "cmd" => ?cmd);
-        for req in cmd.request.get_requests() {
+        for req in cmd.request.requests.iter().rev() {
             if req.has_put() {
                 if let Some(ts) = get_causal_ts(req.get_put().get_value()) {
-                    debug!("(rawkv)CausalObserver on_apply_cmd"; "region" => region_id, "ts" => ts);
-                    self.regions_map
-                        .borrow_mut()
-                        .entry(region_id)
-                        .and_modify(|r| r.max_ts = ts)
-                        .or_insert_with(|| RegionCausalInfo::new(ts));
+                    self.causal_manager.update_max_ts(region_id, ts);
+                    debug!("(rawkv)CausalObserver on_apply_cmd.update_max_ts"; "region" => region_id, "ts" => ts, "causal_manager" => ?self.causal_manager);
+                    break; // (rawkv)causal_ts must be incremental in a batch.
                 }
             }
+            // TODO(rawkv): delete
         }
     }
 
-    fn on_flush_apply(&self, _engine: E) {
-        if !self.regions_map.borrow().is_empty() {
-            let m = self.regions_map.replace(RegionsMap::default());
-            for (region_id, info) in m {
-                self.causal_manager.update_max_ts(region_id, info.max_ts);
-            }
-        }
-        debug!("(rawkv)CausalObserver on_flush_apply"; "causal_manager" => ?self.causal_manager);
-    }
+    fn on_flush_apply(&self, _engine: Option<E>) {}
 }
 
 impl RoleObserver for CausalObserver {
@@ -216,9 +203,9 @@ mod tests {
                 &ob,
                 ob_id,
                 region_id,
-                Cmd::new(i.try_into().unwrap(), cmd_req, RaftCmdResponse::default()),
+                &Cmd::new(i.try_into().unwrap(), cmd_req, RaftCmdResponse::default()),
             );
-            ob.on_flush_apply(engines.kv.clone());
+            ob.on_flush_apply(Some(engines.kv.clone()));
         }
 
         for (k, v) in m {

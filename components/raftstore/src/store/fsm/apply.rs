@@ -509,7 +509,8 @@ where
             .on_flush_apply
             .observe_closure_duration(|| {
                 // Call it before invoking callback for preventing Commit is executed before Prewrite is observed.
-                self.host.on_flush_apply(self.engine.clone());
+                // self.host.on_flush_apply(Some(self.engine.clone())); // TODO(rawkv): add option here
+                self.host.on_flush_apply(None); // (rawkv): `engine` is used for read old value, which is unnecessary for rawkv.
             });
 
         for cbs in self.cbs.drain(..) {
@@ -1112,7 +1113,7 @@ where
         apply_ctx.host.on_apply_cmd(
             self.observe_cmd.as_ref(),
             self.region_id(),
-            cmd.clone(),
+            &cmd,
             &t,
             Some(&mut metrics),
         );
@@ -4309,15 +4310,15 @@ mod tests {
                 .push(CmdBatch::new(observe_id, region_id));
         }
 
-        fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: Cmd) {
+        fn on_apply_cmd(&self, observe_id: ObserveID, region_id: u64, cmd: &Cmd) {
             self.cmd_batches
                 .borrow_mut()
                 .last_mut()
                 .expect("should exist some cmd batch")
-                .push(observe_id, region_id, cmd);
+                .push(observe_id, region_id, cmd.clone());
         }
 
-        fn on_flush_apply(&self, _: E) {
+        fn on_flush_apply(&self, _: Option<E>) {
             if !self.cmd_batches.borrow().is_empty() {
                 let batches = self.cmd_batches.replace(Vec::default());
                 for b in batches {

@@ -128,6 +128,11 @@ lazy_static! {
 #[derive(Clone)]
 pub struct CdcLocalMetrics {
     pub on_apply_cmd: local::LocalHistogram,
+    pub on_apply_cmd_1: local::LocalHistogram,
+
+    pub on_flush_apply: local::LocalHistogram,
+    pub on_flush_apply_1: local::LocalHistogram,
+    pub on_flush_apply_2: local::LocalHistogram,
 }
 
 impl Default for CdcLocalMetrics {
@@ -136,6 +141,18 @@ impl Default for CdcLocalMetrics {
             on_apply_cmd: CDC_OBSERVER_DURATION
                 .with_label_values(&["on_apply_cmd"])
                 .local(),
+            on_apply_cmd_1: CDC_OBSERVER_DURATION
+                .with_label_values(&["on_apply_cmd_1"])
+                .local(),
+            on_flush_apply: CDC_OBSERVER_DURATION
+                .with_label_values(&["on_flush_apply"])
+                .local(),
+            on_flush_apply_1: CDC_OBSERVER_DURATION
+                .with_label_values(&["on_flush_apply_1"])
+                .local(),
+            on_flush_apply_2: CDC_OBSERVER_DURATION
+                .with_label_values(&["on_flush_apply_2"])
+                .local(),
         }
     }
 }
@@ -143,5 +160,9 @@ impl Default for CdcLocalMetrics {
 impl CdcLocalMetrics {
     pub fn flush(&self) {
         self.on_apply_cmd.flush();
+        self.on_apply_cmd_1.flush();
+        self.on_flush_apply.flush();
+        self.on_flush_apply_1.flush();
+        self.on_flush_apply_2.flush();
     }
 }

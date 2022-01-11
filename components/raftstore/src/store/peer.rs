@@ -2922,10 +2922,10 @@ where
                 // to ensure observers get the latest values modified by calllback.
                 cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
             }
-            poll_ctx
-                .raft_metrics
-                .pre_propose_coprocessor_1
-                .observe(t.saturating_elapsed_secs());
+            // poll_ctx
+            //     .raft_metrics
+            //     .pre_propose_coprocessor_1
+            //     .observe(t.saturating_elapsed_secs());
 
             poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
             poll_ctx

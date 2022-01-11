@@ -418,6 +418,10 @@ pub struct CoprocessorMetrics {
     pub on_apply_cmd_1: LocalHistogram,
     pub on_apply_cmd_2: LocalHistogram,
     pub on_apply_cmd_3: LocalHistogram,
+
+    pub on_flush_apply_1: LocalHistogram,
+    pub on_flush_apply_2: LocalHistogram,
+    pub on_flush_apply_3: LocalHistogram,
 }
 
 impl Default for CoprocessorMetrics {
@@ -445,6 +449,16 @@ impl Default for CoprocessorMetrics {
             on_apply_cmd_3: COPROCESSOR_DURATION
                 .with_label_values(&["on_apply_cmd_3"])
                 .local(),
+
+            on_flush_apply_1: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_1"])
+                .local(),
+            on_flush_apply_2: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_2"])
+                .local(),
+            on_flush_apply_3: COPROCESSOR_DURATION
+                .with_label_values(&["on_flush_apply_3"])
+                .local(),
         }
     }
 }
@@ -459,5 +473,9 @@ impl CoprocessorMetrics {
         self.on_apply_cmd_1.flush();
         self.on_apply_cmd_2.flush();
         self.on_apply_cmd_3.flush();
+
+        self.on_flush_apply_1.flush();
+        self.on_flush_apply_2.flush();
+        self.on_flush_apply_3.flush();
     }
 }

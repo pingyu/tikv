@@ -55,7 +55,7 @@ impl Resolver {
         let key: Arc<[u8]> = key.into_boxed_slice().into();
         if self.locks_by_key.contains_key(&key) {
             // (rawkv) Happens when a second request with same key is proposed before the first one is applied.
-            warn!(
+            debug!(
                 "duplicated track lock {}@{}, region {}, skip",
                 &log_wrappers::Value::key(&key),
                 start_ts,

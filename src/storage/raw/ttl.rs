@@ -3,7 +3,7 @@
 use crate::storage::kv::{Iterator, Result, Snapshot, TTL_TOMBSTONE};
 use crate::storage::Statistics;
 
-use engine_traits::util::{get_expire_ts, strip_extended_fields, truncate_extended_fields};
+use engine_traits::util::{get_expire_ts, strip_extended_fields, ExtendedFields};
 use engine_traits::CfName;
 use engine_traits::{IterOptions, ReadOptions};
 use txn_types::{Key, Value};
@@ -40,13 +40,14 @@ pub struct TTLSnapshot<S: Snapshot> {
 impl<S: Snapshot> TTLSnapshot<S> {
     fn map_value(&self, value_with_ttl: Result<Option<Value>>) -> Result<Option<Value>> {
         match value_with_ttl? {
-            Some(mut v) => {
-                let expire_ts = get_expire_ts(&v)?;
-                if expire_ts != 0 && expire_ts <= self.current_ts {
-                    return Ok(None);
-                }
-                truncate_extended_fields(&mut v).unwrap();
-                Ok(Some(v))
+            Some(v) => {
+                // let expire_ts = get_expire_ts(&v)?;
+                // if expire_ts != 0 && expire_ts <= self.current_ts {
+                //     return Ok(None);
+                // }
+                // truncate_extended_fields(&mut v).unwrap();
+                // Ok(Some(v))
+                Ok(ExtendedFields::extract_value(v, self.current_ts)?)
             }
             None => Ok(None),
         }
