@@ -147,6 +147,16 @@ impl_box_observer!(
     WrappedRegionChangeObserver
 );
 impl_box_observer!(
+    BoxRegionSplitObserver,
+    RegionSplitObserver,
+    WrappedRegionSplitObserver
+);
+impl_box_observer!(
+    BoxRegionMergeObserver,
+    RegionMergeObserver,
+    WrappedRegionMergeObserver
+);
+impl_box_observer!(
     BoxReadIndexObserver,
     ReadIndexObserver,
     WrappedReadIndexObserver
@@ -171,6 +181,8 @@ where
     consistency_check_observers: Vec<Entry<BoxConsistencyCheckObserver<E>>>,
     role_observers: Vec<Entry<BoxRoleObserver>>,
     region_change_observers: Vec<Entry<BoxRegionChangeObserver>>,
+    region_split_observers: Vec<Entry<BoxRegionSplitObserver>>,
+    region_merge_observers: Vec<Entry<BoxRegionMergeObserver>>,
     cmd_observers: Vec<Entry<BoxCmdObserver<E>>>,
     read_index_observers: Vec<Entry<BoxReadIndexObserver>>,
     // TODO: add endpoint
@@ -187,6 +199,8 @@ impl<E: KvEngine> Default for Registry<E> {
             consistency_check_observers: Default::default(),
             role_observers: Default::default(),
             region_change_observers: Default::default(),
+            region_split_observers: Default::default(),
+            region_merge_observers: Default::default(),
             cmd_observers: Default::default(),
             read_index_observers: Default::default(),
             global_cmd_observers: Default::default(),
@@ -242,6 +256,14 @@ impl<E: KvEngine> Registry<E> {
 
     pub fn register_region_change_observer(&mut self, priority: u32, rlo: BoxRegionChangeObserver) {
         push!(priority, rlo, self.region_change_observers);
+    }
+
+    pub fn register_region_split_observer(&mut self, priority: u32, rlo: BoxRegionSplitObserver) {
+        push!(priority, rlo, self.region_split_observers);
+    }
+
+    pub fn register_region_merge_observer(&mut self, priority: u32, rlo: BoxRegionMergeObserver) {
+        push!(priority, rlo, self.region_merge_observers);
     }
 
     pub fn register_cmd_observer(&mut self, priority: u32, rlo: BoxCmdObserver<E>) {
@@ -510,6 +532,22 @@ impl<E: KvEngine> CoprocessorHost<E> {
         );
     }
 
+    pub fn on_region_split(&self, old_region_id: u64, new_region_id: u64) {
+        for ob in &self.registry.region_split_observers {
+            ob.observer
+                .inner()
+                .on_region_split(old_region_id, new_region_id);
+        }
+    }
+
+    pub fn on_region_merge(&self, source_region_id: u64, target_region_id: u64) {
+        for ob in &self.registry.region_merge_observers {
+            ob.observer
+                .inner()
+                .on_region_merge(source_region_id, target_region_id);
+        }
+    }
+
     pub fn prepare_for_apply(&self, observe_cmd: Option<&ObserveCmd>, region_id: u64) {
         for ob in &self.registry.global_cmd_observers {
             ob.observer
@@ -718,6 +756,10 @@ mod tests {
             ctx.bypass = self.bypass.load(Ordering::SeqCst);
         }
     }
+
+    impl RegionSplitObserver for TestCoprocessor {}
+
+    impl RegionMergeObserver for TestCoprocessor {}
 
     impl ApplySnapshotObserver for TestCoprocessor {
         fn apply_plain_kvs(

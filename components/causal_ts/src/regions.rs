@@ -7,8 +7,9 @@ use engine_traits::CfName;
 use engine_traits::{util::get_causal_ts, KvEngine};
 use raft::StateRole;
 use raftstore::coprocessor::{
-    ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxRoleObserver, Cmd,
-    CmdObserver, Coprocessor, CoprocessorHost, ObserverContext, RoleObserver,
+    ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxRegionMergeObserver,
+    BoxRegionSplitObserver, BoxRoleObserver, Cmd, CmdObserver, Coprocessor, CoprocessorHost,
+    ObserverContext, RegionMergeObserver, RegionSplitObserver, RoleObserver,
 };
 use raftstore::store::fsm::ObserveID;
 use txn_types::TimeStamp;
@@ -90,6 +91,14 @@ impl CausalObserver {
             CAUSAL_OBSERVER_PRIORITY,
             BoxApplySnapshotObserver::new(self.clone()),
         );
+        coprocessor_host.registry.register_region_split_observer(
+            CAUSAL_OBSERVER_PRIORITY,
+            BoxRegionSplitObserver::new(self.clone()),
+        );
+        coprocessor_host.registry.register_region_merge_observer(
+            CAUSAL_OBSERVER_PRIORITY,
+            BoxRegionMergeObserver::new(self.clone()),
+        );
     }
 }
 
@@ -138,6 +147,28 @@ impl ApplySnapshotObserver for CausalObserver {
 
     fn apply_sst(&self, ctx: &mut ObserverContext<'_>, _cf: CfName, _path: &str) {
         self.handle_snapshot(ctx.region().get_id()).unwrap(); // TODO: error handle
+    }
+}
+
+impl RegionSplitObserver for CausalObserver {
+    fn on_region_split(&self, old_region_id: u64, new_region_id: u64) {
+        let max_ts = self.causal_manager.max_ts(old_region_id);
+        self.causal_manager.update_max_ts(new_region_id, max_ts);
+    }
+}
+
+impl RegionMergeObserver for CausalObserver {
+    fn on_region_merge(&self, source_region_id: u64, target_region_id: u64) {
+        let source_region_max_ts = self.causal_manager.max_ts(source_region_id);
+        let target_region_max_ts = self.causal_manager.max_ts(target_region_id);
+        let max_ts = if source_region_max_ts > target_region_max_ts {
+            source_region_max_ts
+        } else {
+            target_region_max_ts
+        };
+
+        self.causal_manager.update_max_ts(target_region_id, max_ts);
+        // TODO need delete target_region_id from causal_manager ?
     }
 }
 
