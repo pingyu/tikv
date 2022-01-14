@@ -2284,7 +2284,8 @@ where
             if new_region.get_id() == derived.get_id() {
                 continue;
             }
-            ctx.host.on_region_split(derived.get_id(), new_region.get_id());
+            ctx.host
+                .on_region_split(derived.get_id(), new_region.get_id());
         }
 
         Ok((
@@ -2489,7 +2490,8 @@ where
                 )
             });
 
-        ctx.host.on_region_merge(source_region.get_id(), region.get_id());
+        ctx.host
+            .on_region_merge(source_region.get_id(), region.get_id());
 
         PEER_ADMIN_CMD_COUNTER.commit_merge.success.inc();
 

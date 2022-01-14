@@ -1266,3 +1266,55 @@ fn test_sync_max_ts_after_region_merge() {
     let new_max_ts = cm.max_ts();
     assert!(new_max_ts > max_ts);
 }
+
+#[test]
+fn test_node_base_merge() {
+    let mut cluster = new_node_cluster(0, 3);
+    configure_for_merge(&mut cluster);
+
+    cluster.run();
+
+    cluster.must_put(b"k1", b"v1");
+    cluster.must_put(b"k3", b"v3");
+
+    let pd_client = Arc::clone(&cluster.pd_client);
+    let region = pd_client.get_region(b"k1").unwrap();
+    cluster.must_split(&region, b"k2");
+    let left = pd_client.get_region(b"k1").unwrap();
+    let right = pd_client.get_region(b"k2").unwrap();
+    assert_eq!(region.get_id(), right.get_id());
+    assert_eq!(left.get_end_key(), right.get_start_key());
+    assert_eq!(right.get_start_key(), b"k2");
+
+    let mut left_leader = cluster.leader_of_region(left.get_id()).unwrap();
+    // let mut right_leader = cluster.leader_of_region(right.get_id()).unwrap();
+
+    // leader transfer
+    if left_leader.get_store_id() == right_leader.get_store_id() {
+        let mut new_leader = left_leader.clone();
+        for peer in left.peers.iter() {
+            if peer.get_store_id() != left_leader.get_store_id() {
+                new_leader = peer.clone();
+                break;
+            }
+        }
+        assert_ne!(new_leader, left_leader);
+        cluster.must_transfer_leader(left.get_id(), new_leader.clone());
+        left_leader = cluster.leader_of_region(left.get_id()).unwrap();
+        assert_eq!(new_leader, left_leader);
+    }
+
+    cluster.stop_node(left_leader.get_store_id());
+    thread::sleep(Duration::from_millis(200));
+    cluster.run_node(left_leader).unwrap(); // 200, 0
+
+    pd_client.must_merge(left.get_id(), right.get_id()); // left merge into right
+
+    let region = pd_client.get_region(b"k1").unwrap();
+    assert_eq!(region.get_id(), right.get_id());
+    assert_eq!(region.get_start_key(), left.get_start_key());
+    assert_eq!(region.get_end_key(), right.get_end_key());
+
+    // 200 > 0, target region's store will reflash tso
+    cluster.must_put(b"k4", b"v4");
+}

@@ -1,5 +1,6 @@
 // Copyright 2016 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::mem::swap;
 use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::Duration;
@@ -888,4 +889,62 @@ fn test_split_with_epoch_not_match() {
         .call_command_on_leader(req, Duration::from_secs(3))
         .unwrap();
     assert!(resp.get_header().get_error().has_epoch_not_match());
+}
+
+#[test]
+fn test_split_with_leader_transfer() {
+    let mut cluster = new_server_cluster(0, 5);
+
+    cluster.run();
+    let pd_client = Arc::clone(&cluster.pd_client);
+
+    let region = pd_client.get_region(b"").unwrap();
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
+    let mut target_store_id = leader.get_store_id();
+    for peer in region.peers.iter() {
+        if peer.get_store_id() != leader.get_store_id() {
+            target_store_id = peer.get_store_id();
+            break;
+        }
+    }
+    assert_ne!(target_store_id, leader.get_store_id());
+
+    cluster.stop_node(target_store_id);
+    thread::sleep(Duration::from_millis(200));
+    cluster.run_node(target_store_id).unwrap(); // 0, 200
+    thread::sleep(Duration::from_millis(400)); // 500, 200
+
+    // split region
+    cluster.must_put(b"k1", b"v1");
+    cluster.must_put(b"k3", b"v3");
+    let region = cluster.get_region(b"k1");
+    cluster.must_split(&region, b"k2");
+
+    let mut old_region = pd_client.get_region(b"k1").unwrap();
+    let mut new_region = pd_client.get_region(b"k3").unwrap();
+    assert_ne!(old_region, new_region);
+
+    if new_region.get_id() == region.get_id() {
+        swap(&mut old_region, &mut new_region);
+    }
+    assert_ne!(new_region.get_id(), region.get_id());
+
+    // leader transfer
+    let mut new_region_leader = cluster.leader_of_region(new_region.get_id()).unwrap();
+    if new_region_leader.get_store_id() != target_store_id {
+        let mut new_leader = new_region_leader.clone();
+        for peer in new_region.peers.iter() {
+            if peer.get_store_id() == target_store_id {
+                new_leader = peer.clone();
+                break;
+            }
+        }
+        assert_eq!(new_leader.get_store_id(), target_store_id);
+        cluster.must_transfer_leader(new_region.get_id(), new_leader.clone());
+        new_region_leader = cluster.leader_of_region(new_region.get_id()).unwrap();
+        assert_eq!(new_region_leader, new_leader);
+    }
+
+    // 200 < 500, new region's store will reflash tso
+    cluster.must_put(new_region.start_key.to_vec(), b"test_split");
 }

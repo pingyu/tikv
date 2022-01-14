@@ -19,7 +19,7 @@ use tempfile::{Builder, TempDir};
 use tokio::runtime::Builder as TokioBuilder;
 
 use super::*;
-use causal_ts::TsoSimpleProvider;
+use causal_ts;
 use collections::{HashMap, HashSet};
 use concurrency_manager::ConcurrencyManager;
 use encryption_export::DataKeyManager;
@@ -272,7 +272,13 @@ impl Simulator for ServerCluster {
             .start_observe_lock_apply(&mut coprocessor_host, concurrency_manager.clone())
             .unwrap();
 
-        let causal_ts = TsoSimpleProvider::new(self.pd_client.clone());
+        let hlc_provider = causal_ts::HlcProviderWithTsoAsPhyClk::new(self.pd_client.clone());
+        block_on(hlc_provider.init()).unwrap(); // TODO(rawkv): error handle
+        let causal_ts = Arc::new(hlc_provider);
+        let causal_manager = Arc::new(causal_ts::RegionsCausalManager::default());
+        // Register causal observer.
+        let causal_ob = causal_ts::CausalObserver::new(causal_manager, causal_ts.clone());
+        causal_ob.register_to(&mut coprocessor_host);
 
         let mut lock_mgr = LockManager::new(cfg.pessimistic_txn.pipelined);
         let store = create_raft_storage(
@@ -282,7 +288,7 @@ impl Simulator for ServerCluster {
             lock_mgr.clone(),
             concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
-            Arc::new(causal_ts),
+            causal_ts,
         )?;
         self.storages.insert(node_id, raft_engine);
 
