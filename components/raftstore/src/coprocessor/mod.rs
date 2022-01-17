@@ -1,5 +1,6 @@
 // Copyright 2016 TiKV Project Authors. Licensed under Apache-2.0.
 
+use std::vec;
 use std::vec::IntoIter;
 
 use engine_traits::CfName;
@@ -21,8 +22,8 @@ pub use self::config::{Config, ConsistencyCheckMethod};
 pub use self::consistency_check::{ConsistencyCheckObserver, Raw as RawConsistencyCheckObserver};
 pub use self::dispatcher::{
     BoxAdminObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxConsistencyCheckObserver,
-    BoxQueryObserver, BoxRegionChangeObserver, BoxRoleObserver, BoxSplitCheckObserver,
-    BoxRegionSplitObserver, BoxRegionMergeObserver, CoprocessorHost, Registry,
+    BoxQueryObserver, BoxRegionChangeObserver, BoxRegionMergeObserver, BoxRegionSplitObserver,
+    BoxRoleObserver, BoxSplitCheckObserver, CoprocessorHost, Registry,
 };
 pub use self::error::{Error, Result};
 pub use self::region_info_accessor::{
@@ -166,7 +167,7 @@ pub trait RegionChangeObserver: Coprocessor {
 }
 
 pub trait RegionSplitObserver: Coprocessor {
-    fn on_region_split(&self, _: u64, _: u64) {}
+    fn on_region_split(&self, _: u64, _: &Vec<u64>) {}
 }
 
 pub trait RegionMergeObserver: Coprocessor {

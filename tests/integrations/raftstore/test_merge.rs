@@ -1,5 +1,6 @@
 // Copyright 2017 TiKV Project Authors. Licensed under Apache-2.0.
 
+use engine_traits::util::append_extended_fields;
 use std::iter::*;
 use std::sync::atomic::Ordering;
 use std::sync::*;
@@ -1268,53 +1269,97 @@ fn test_sync_max_ts_after_region_merge() {
 }
 
 #[test]
-fn test_node_base_merge() {
-    let mut cluster = new_node_cluster(0, 3);
+fn test_server_merge_with_region_tso() {
+    let mut cluster = new_server_cluster(0, 3);
     configure_for_merge(&mut cluster);
 
     cluster.run();
 
-    cluster.must_put(b"k1", b"v1");
-    cluster.must_put(b"k3", b"v3");
+    let pd_client = cluster.pd_client.clone();
+    let region = pd_client.get_region(b"").unwrap();
+    let leader = cluster.leader_of_region(region.get_id()).unwrap();
 
-    let pd_client = Arc::clone(&cluster.pd_client);
+    let causal_ts = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_ts(leader.get_store_id());
+    let ts = causal_ts.get_ts().unwrap();
+
+    let mut v1 = b"v1".to_vec();
+    append_extended_fields(&mut v1, 0, Some(ts));
+    let mut v3 = b"v3".to_vec();
+    append_extended_fields(&mut v3, 0, Some(ts));
+
+    cluster.must_put(b"k1", &v1);
+    cluster.must_put(b"k3", &v3);
+
     let region = pd_client.get_region(b"k1").unwrap();
     cluster.must_split(&region, b"k2");
-    let left = pd_client.get_region(b"k1").unwrap();
-    let right = pd_client.get_region(b"k2").unwrap();
-    assert_eq!(region.get_id(), right.get_id());
-    assert_eq!(left.get_end_key(), right.get_start_key());
-    assert_eq!(right.get_start_key(), b"k2");
 
-    let mut left_leader = cluster.leader_of_region(left.get_id()).unwrap();
-    // let mut right_leader = cluster.leader_of_region(right.get_id()).unwrap();
+    let left_region = pd_client.get_region(b"k1").unwrap();
+    let right_region = pd_client.get_region(b"k3").unwrap();
+
+    let mut left_region_leader = cluster.leader_of_region(left_region.get_id()).unwrap();
+    let right_region_leader = cluster.leader_of_region(right_region.get_id()).unwrap();
 
     // leader transfer
-    if left_leader.get_store_id() == right_leader.get_store_id() {
-        let mut new_leader = left_leader.clone();
-        for peer in left.peers.iter() {
-            if peer.get_store_id() != left_leader.get_store_id() {
+    if left_region_leader.get_store_id() == right_region_leader.get_store_id() {
+        let mut new_leader = left_region_leader.clone();
+        for peer in left_region.peers.iter() {
+            if peer.get_store_id() != left_region_leader.get_store_id() {
                 new_leader = peer.clone();
                 break;
             }
         }
-        assert_ne!(new_leader, left_leader);
-        cluster.must_transfer_leader(left.get_id(), new_leader.clone());
-        left_leader = cluster.leader_of_region(left.get_id()).unwrap();
-        assert_eq!(new_leader, left_leader);
+        assert_ne!(new_leader, left_region_leader);
+        cluster.must_transfer_leader(left_region.get_id(), new_leader.clone());
+        left_region_leader = cluster.leader_of_region(left_region.get_id()).unwrap();
+        assert_eq!(new_leader, left_region_leader);
     }
 
-    cluster.stop_node(left_leader.get_store_id());
+    let causal_manager1 = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_manager(left_region_leader.get_store_id());
+    let causal_manager2 = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_manager(right_region_leader.get_store_id());
+
+    let region_ts1 = causal_manager1.max_ts(left_region.get_id());
+    let region_ts2 = causal_manager1.max_ts(right_region.get_id());
+    let region_ts3 = causal_manager2.max_ts(left_region.get_id());
+    let region_ts4 = causal_manager2.max_ts(right_region.get_id());
+
+    assert_eq!(region_ts1, ts);
+    assert_eq!(region_ts2, ts);
+    assert_eq!(region_ts3, ts);
+    assert_eq!(region_ts4, ts);
+
+    let ts1 = causal_ts.get_ts().unwrap();
+    assert_ne!(ts1, ts);
+    let mut v4 = b"v4".to_vec();
+    append_extended_fields(&mut v4, 0, Some(ts1));
+    cluster.must_put(b"k1", &v4);
+
     thread::sleep(Duration::from_millis(200));
-    cluster.run_node(left_leader).unwrap(); // 200, 0
 
-    pd_client.must_merge(left.get_id(), right.get_id()); // left merge into right
+    let region_ts1 = causal_manager1.max_ts(left_region.get_id());
+    let region_ts2 = causal_manager1.max_ts(right_region.get_id());
+    let region_ts3 = causal_manager2.max_ts(left_region.get_id());
+    let region_ts4 = causal_manager2.max_ts(right_region.get_id());
+    assert_eq!(region_ts1, ts1);
+    assert_eq!(region_ts2, ts);
+    assert_eq!(region_ts3, ts1);
+    assert_eq!(region_ts4, ts);
 
-    let region = pd_client.get_region(b"k1").unwrap();
-    assert_eq!(region.get_id(), right.get_id());
-    assert_eq!(region.get_start_key(), left.get_start_key());
-    assert_eq!(region.get_end_key(), right.get_end_key());
+    pd_client.must_merge(left_region.get_id(), right_region.get_id()); // left merge into right
 
-    // 200 > 0, target region's store will reflash tso
-    cluster.must_put(b"k4", b"v4");
+    let region_ts1 = causal_manager1.max_ts(right_region.get_id());
+    let region_ts2 = causal_manager2.max_ts(right_region.get_id());
+    assert_eq!(region_ts1, ts1);
+    assert_eq!(region_ts2, ts1);
 }

@@ -532,11 +532,11 @@ impl<E: KvEngine> CoprocessorHost<E> {
         );
     }
 
-    pub fn on_region_split(&self, old_region_id: u64, new_region_id: u64) {
+    pub fn on_region_split(&self, old_region_id: u64, new_region_ids: &Vec<u64>) {
         for ob in &self.registry.region_split_observers {
             ob.observer
                 .inner()
-                .on_region_split(old_region_id, new_region_id);
+                .on_region_split(old_region_id, new_region_ids);
         }
     }
 

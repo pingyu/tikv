@@ -246,8 +246,11 @@ pub fn emplace_causal_ts(value_with_extended: &mut Vec<u8>, causal_ts: TimeStamp
 
 #[inline]
 pub fn get_causal_ts(value_with_extended: &[u8]) -> Option<TimeStamp> {
-    let (e, _, _) = ExtendedFields::extract(value_with_extended).unwrap();
-    e.causal_ts()
+    let result = ExtendedFields::extract(value_with_extended);
+    match result {
+        Ok((e, _, _)) => e.causal_ts(),
+        Err(_) => None,
+    }
 }
 
 #[cfg(test)]

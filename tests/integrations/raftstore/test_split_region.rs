@@ -13,6 +13,7 @@ use kvproto::raft_serverpb::RaftMessage;
 use raft::eraftpb::MessageType;
 
 use engine_rocks::Compat;
+use engine_traits::util::append_extended_fields;
 use engine_traits::{Iterable, Peekable, CF_WRITE};
 use keys::data_key;
 use pd_client::PdClient;
@@ -909,14 +910,21 @@ fn test_split_with_leader_transfer() {
     }
     assert_ne!(target_store_id, leader.get_store_id());
 
-    cluster.stop_node(target_store_id);
-    thread::sleep(Duration::from_millis(200));
-    cluster.run_node(target_store_id).unwrap(); // 0, 200
-    thread::sleep(Duration::from_millis(400)); // 500, 200
-
     // split region
-    cluster.must_put(b"k1", b"v1");
-    cluster.must_put(b"k3", b"v3");
+    let causal_ts = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_ts(leader.get_store_id());
+    let ts = causal_ts.get_ts().unwrap();
+
+    let mut v1 = b"v1".to_vec();
+    append_extended_fields(&mut v1, 0, Some(ts));
+    let mut v3 = b"v3".to_vec();
+    append_extended_fields(&mut v3, 0, Some(ts));
+
+    cluster.must_put(b"k1", &v1);
+    cluster.must_put(b"k3", &v3);
     let region = cluster.get_region(b"k1");
     cluster.must_split(&region, b"k2");
 
@@ -944,7 +952,24 @@ fn test_split_with_leader_transfer() {
         new_region_leader = cluster.leader_of_region(new_region.get_id()).unwrap();
         assert_eq!(new_region_leader, new_leader);
     }
+    let causal_manager1 = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_manager(leader.get_store_id());
+    let causal_manager2 = cluster
+        .sim
+        .write()
+        .unwrap()
+        .get_causal_manager(new_region_leader.get_store_id());
 
-    // 200 < 500, new region's store will reflash tso
-    cluster.must_put(new_region.start_key.to_vec(), b"test_split");
+    let node1_old_region_ts = causal_manager1.max_ts(old_region.get_id());
+    let node1_new_region_ts = causal_manager1.max_ts(new_region.get_id());
+    let node2_old_region_ts = causal_manager2.max_ts(old_region.get_id());
+    let node2_new_region_ts = causal_manager2.max_ts(new_region.get_id());
+
+    assert_eq!(node1_old_region_ts, ts);
+    assert_eq!(node1_new_region_ts, ts);
+    assert_eq!(node2_old_region_ts, ts);
+    assert_eq!(node2_new_region_ts, ts);
 }

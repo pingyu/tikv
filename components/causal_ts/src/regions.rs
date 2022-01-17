@@ -12,6 +12,7 @@ use raftstore::coprocessor::{
     ObserverContext, RegionMergeObserver, RegionSplitObserver, RoleObserver,
 };
 use raftstore::store::fsm::ObserveID;
+use std::cmp;
 use txn_types::TimeStamp;
 
 use std::sync::{Arc, RwLock};
@@ -57,6 +58,11 @@ impl RegionsCausalManager {
     pub fn max_ts(&self, region_id: u64) -> TimeStamp {
         let m = self.regions_map.read().unwrap();
         m.get(&region_id).map_or_else(TimeStamp::zero, |r| r.max_ts)
+    }
+
+    pub fn delete_ts(&self, region_id: u64) {
+        let mut m = self.regions_map.write().unwrap();
+        m.remove(&region_id);
     }
 }
 
@@ -151,9 +157,11 @@ impl ApplySnapshotObserver for CausalObserver {
 }
 
 impl RegionSplitObserver for CausalObserver {
-    fn on_region_split(&self, old_region_id: u64, new_region_id: u64) {
+    fn on_region_split(&self, old_region_id: u64, new_region_ids: &Vec<u64>) {
         let max_ts = self.causal_manager.max_ts(old_region_id);
-        self.causal_manager.update_max_ts(new_region_id, max_ts);
+        for new_region_id in new_region_ids.iter() {
+            self.causal_manager.update_max_ts(*new_region_id, max_ts);
+        }
     }
 }
 
@@ -161,14 +169,10 @@ impl RegionMergeObserver for CausalObserver {
     fn on_region_merge(&self, source_region_id: u64, target_region_id: u64) {
         let source_region_max_ts = self.causal_manager.max_ts(source_region_id);
         let target_region_max_ts = self.causal_manager.max_ts(target_region_id);
-        let max_ts = if source_region_max_ts > target_region_max_ts {
-            source_region_max_ts
-        } else {
-            target_region_max_ts
-        };
+        let max_ts = cmp::max(source_region_max_ts, target_region_max_ts);
 
         self.causal_manager.update_max_ts(target_region_id, max_ts);
-        // TODO need delete target_region_id from causal_manager ?
+        self.causal_manager.delete_ts(source_region_id);
     }
 }
 

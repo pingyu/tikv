@@ -1,5 +1,7 @@
 // Copyright 2016 TiKV Project Authors. Licensed under Apache-2.0.
 
+use causal_ts::CausalTsProvider;
+use causal_ts::RegionsCausalManager;
 use std::collections::hash_map::Entry;
 use std::error::Error as StdError;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
@@ -76,6 +78,8 @@ pub trait Simulator {
     fn clear_send_filters(&mut self, node_id: u64);
     fn add_recv_filter(&mut self, node_id: u64, filter: Box<dyn Filter>);
     fn clear_recv_filters(&mut self, node_id: u64);
+    fn get_causal_manager(&mut self, node_id: u64) -> Arc<RegionsCausalManager>;
+    fn get_causal_ts(&mut self, node_id: u64) -> Arc<dyn CausalTsProvider>;
 
     fn call_command(&self, request: RaftCmdRequest, timeout: Duration) -> Result<RaftCmdResponse> {
         let node_id = request.get_header().get_peer().get_store_id();
