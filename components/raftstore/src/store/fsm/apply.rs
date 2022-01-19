@@ -2280,6 +2280,15 @@ where
             |_| { unreachable!() }
         );
 
+        let mut new_region_ids = Vec::new();
+        for new_region in &regions {
+            if new_region.get_id() == derived.get_id() {
+                continue;
+            }
+            new_region_ids.push(new_region.get_id());
+        }
+        ctx.host.on_region_split(derived.get_id(), &new_region_ids);
+
         Ok((
             resp,
             ApplyResult::Res(ExecResult::SplitRegion {
@@ -2481,6 +2490,9 @@ where
                     self.tag, region, e
                 )
             });
+
+        ctx.host
+            .on_region_merge(source_region.get_id(), region.get_id());
 
         PEER_ADMIN_CMD_COUNTER.commit_merge.success.inc();
 

@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use tempfile::{Builder, TempDir};
 
+use causal_ts;
 use kvproto::metapb;
 use kvproto::raft_cmdpb::*;
 use kvproto::raft_serverpb::{self, RaftMessage};
@@ -427,6 +428,14 @@ impl Simulator for NodeCluster {
 
     fn get_router(&self, node_id: u64) -> Option<RaftRouter<RocksEngine, RocksEngine>> {
         self.nodes.get(&node_id).map(|node| node.get_router())
+    }
+
+    fn get_causal_manager(&mut self, _node_id: u64) -> Arc<causal_ts::RegionsCausalManager> {
+        unimplemented!();
+    }
+
+    fn get_causal_ts(&mut self, _node_id: u64) -> Arc<dyn causal_ts::CausalTsProvider> {
+        unimplemented!();
     }
 }
 

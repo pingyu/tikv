@@ -19,7 +19,7 @@ use tempfile::{Builder, TempDir};
 use tokio::runtime::Builder as TokioBuilder;
 
 use super::*;
-use causal_ts::TsoSimpleProvider;
+use causal_ts;
 use collections::{HashMap, HashSet};
 use concurrency_manager::ConcurrencyManager;
 use encryption_export::DataKeyManager;
@@ -126,6 +126,8 @@ pub struct ServerCluster {
     pub coprocessor_hooks: HashMap<u64, CopHooks>,
     pub security_mgr: Arc<SecurityManager>,
     pub txn_extra_schedulers: HashMap<u64, Arc<dyn TxnExtraScheduler>>,
+    pub causal_managers: HashMap<u64, Arc<causal_ts::RegionsCausalManager>>,
+    pub causal_tss: HashMap<u64, Arc<dyn causal_ts::CausalTsProvider>>,
     snap_paths: HashMap<u64, TempDir>,
     pd_client: Arc<TestPdClient>,
     raft_client: RaftClient<AddressMap, RaftStoreBlackHole>,
@@ -165,6 +167,8 @@ impl ServerCluster {
             snap_paths: HashMap::default(),
             pending_services: HashMap::default(),
             coprocessor_hooks: HashMap::default(),
+            causal_managers: HashMap::default(),
+            causal_tss: HashMap::default(),
             raft_client,
             concurrency_managers: HashMap::default(),
             env,
@@ -272,7 +276,13 @@ impl Simulator for ServerCluster {
             .start_observe_lock_apply(&mut coprocessor_host, concurrency_manager.clone())
             .unwrap();
 
-        let causal_ts = TsoSimpleProvider::new(self.pd_client.clone());
+        let hlc_provider = causal_ts::HlcProviderWithTsoAsPhyClk::new(self.pd_client.clone());
+        block_on(hlc_provider.init()).unwrap(); // TODO(rawkv): error handle
+        let causal_ts = Arc::new(hlc_provider);
+        let causal_manager = Arc::new(causal_ts::RegionsCausalManager::default());
+        // Register causal observer.
+        let causal_ob = causal_ts::CausalObserver::new(causal_manager.clone(), causal_ts.clone());
+        causal_ob.register_to(&mut coprocessor_host);
 
         let mut lock_mgr = LockManager::new(cfg.pessimistic_txn.pipelined);
         let store = create_raft_storage(
@@ -282,7 +292,7 @@ impl Simulator for ServerCluster {
             lock_mgr.clone(),
             concurrency_manager.clone(),
             lock_mgr.get_pipelined(),
-            Arc::new(causal_ts),
+            causal_ts.clone(),
         )?;
         self.storages.insert(node_id, raft_engine);
 
@@ -426,6 +436,8 @@ impl Simulator for ServerCluster {
         self.region_info_accessors
             .insert(node_id, region_info_accessor);
         self.importers.insert(node_id, importer);
+        self.causal_managers.insert(node_id, causal_manager);
+        self.causal_tss.insert(node_id, causal_ts);
 
         lock_mgr
             .start(
@@ -550,6 +562,14 @@ impl Simulator for ServerCluster {
 
     fn get_router(&self, node_id: u64) -> Option<RaftRouter<RocksEngine, RocksEngine>> {
         self.metas.get(&node_id).map(|m| m.raw_router.clone())
+    }
+
+    fn get_causal_manager(&mut self, node_id: u64) -> Arc<causal_ts::RegionsCausalManager> {
+        self.causal_managers.get(&node_id).unwrap().clone()
+    }
+
+    fn get_causal_ts(&mut self, node_id: u64) -> Arc<dyn causal_ts::CausalTsProvider> {
+        self.causal_tss.get(&node_id).unwrap().clone()
     }
 }
 
