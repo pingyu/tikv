@@ -34,35 +34,51 @@ type RegionsMap = HashMap<u64, RegionCausalInfo>;
 
 #[derive(Debug, Default)]
 pub struct RegionsCausalManager {
-    regions_map: Arc<RwLock<RegionsMap>>,
+    regions_map: RegionsMap,
+    guard: RwLock<u8>,
 }
 
 impl RegionsCausalManager {
     pub fn new() -> RegionsCausalManager {
         RegionsCausalManager {
-            regions_map: Arc::new(RwLock::new(RegionsMap::default())),
+            regions_map: RegionsMap::default(),
+            guard: RwLock::new(0),
         }
     }
 
     pub fn update_max_ts(&self, region_id: u64, new_ts: TimeStamp) {
-        let mut m = self.regions_map.write().unwrap();
-        m.entry(region_id)
-            .and_modify(|r| {
-                if new_ts > r.max_ts {
-                    r.max_ts = new_ts;
-                }
-            })
-            .or_insert_with(|| RegionCausalInfo::new(new_ts));
+        let mut_self = self.get_mut();
+        let mut insert = true;
+        {
+            let _rguard = self.guard.read();
+            if mut_self.regions_map.contains_key(&region_id) {
+                mut_self.regions_map.get_mut(&region_id).unwrap().max_ts = new_ts;
+                insert = false;
+            }
+        }
+        if insert {
+            let _wguard = self.guard.write();
+            mut_self
+                .regions_map
+                .insert(region_id, RegionCausalInfo::new(new_ts));
+        }
     }
 
     pub fn max_ts(&self, region_id: u64) -> TimeStamp {
-        let m = self.regions_map.read().unwrap();
-        m.get(&region_id).map_or_else(TimeStamp::zero, |r| r.max_ts)
+        let _rguard = self.guard.read();
+        self.regions_map
+            .get(&region_id)
+            .map_or_else(TimeStamp::zero, |r| r.max_ts)
     }
 
     pub fn delete_ts(&self, region_id: u64) {
-        let mut m = self.regions_map.write().unwrap();
-        m.remove(&region_id);
+        let mut_self = self.get_mut();
+        let _wguard = self.guard.write();
+        mut_self.regions_map.remove(&region_id);
+    }
+
+    fn get_mut(&self) -> &mut Self {
+        unsafe { &mut *(self as *const Self as *mut Self) }
     }
 }
 
