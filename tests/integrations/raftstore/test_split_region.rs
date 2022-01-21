@@ -919,9 +919,9 @@ fn test_split_with_leader_transfer() {
     let ts = causal_ts.get_ts().unwrap();
 
     let mut v1 = b"v1".to_vec();
-    append_extended_fields(&mut v1, 0, Some(ts));
+    append_extended_fields(&mut v1, 0, Some(ts), false);
     let mut v3 = b"v3".to_vec();
-    append_extended_fields(&mut v3, 0, Some(ts));
+    append_extended_fields(&mut v3, 0, Some(ts), false);
 
     cluster.must_put(b"k1", &v1);
     cluster.must_put(b"k3", &v3);

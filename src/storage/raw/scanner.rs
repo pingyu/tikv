@@ -147,22 +147,22 @@ mod tests {
 
         let key1 = b"key1".to_vec();
         let mut value1 = b"value1".to_vec();
-        append_extended_fields(&mut value1, 0, Some(1.into()));
+        append_extended_fields(&mut value1, 0, Some(1.into()), false);
         kvdb.put_cf(CF_DEFAULT, &key1, &value1).unwrap();
 
         let key2 = b"key2".to_vec();
         let mut value2 = b"value2".to_vec();
-        append_extended_fields(&mut value2, 0, Some(2.into()));
+        append_extended_fields(&mut value2, 0, Some(2.into()), false);
         kvdb.put_cf(CF_DEFAULT, &key2, &value2).unwrap();
 
         let key3 = b"key3".to_vec();
         let mut value3 = b"value3".to_vec();
-        append_extended_fields(&mut value3, 0, Some(3.into()));
+        append_extended_fields(&mut value3, 0, Some(3.into()), false);
         kvdb.put_cf(CF_DEFAULT, &key3, &value3).unwrap();
 
         let key4 = b"key4".to_vec();
         let mut value4 = b"value4".to_vec();
-        append_extended_fields(&mut value4, 10, Some(4.into()));
+        append_extended_fields(&mut value4, 10, Some(4.into()), false);
         kvdb.put_cf(CF_DEFAULT, &key4, &value4).unwrap();
 
         let snapshot = engine.snapshot(SnapContext::default()).unwrap();

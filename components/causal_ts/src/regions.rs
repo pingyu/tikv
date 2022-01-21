@@ -224,7 +224,7 @@ mod tests {
                     .or_insert_with(|| RegionCausalInfo::new(ts.into()));
 
                 let mut value = b"value".to_vec();
-                append_extended_fields(&mut value, 0, Some(ts.into()));
+                append_extended_fields(&mut value, 0, Some(ts.into()), false);
                 let mut req = Request::default();
                 req.mut_put().set_value(value);
 

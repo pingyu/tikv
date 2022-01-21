@@ -1200,7 +1200,7 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
         let mut m = Modify::Put(Self::rawkv_cf(&cf)?, Key::from_encoded(key), value);
         if self.enable_ttl {
             let expire_ts = convert_to_expire_ts(ttl);
-            m.with_extended_fields(expire_ts, Some(TimeStamp::zero()));
+            m.with_extended_fields(expire_ts, Some(TimeStamp::zero()), false);
         } else if ttl != 0 {
             return Err(Error::from(ErrorInner::TTLNotEnabled));
         }
@@ -1295,12 +1295,22 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
     ) -> Result<()> {
         check_key_size!(Some(&key).into_iter(), self.max_key_size, callback);
 
+        let convert_to_write = true;
+        let m: Modify = if convert_to_write {
+            // let empty_val: Vec<u8> = vec![];
+            let mut m_tmp = Modify::Put(
+                Self::rawkv_cf(&cf)?,
+                Key::from_encoded(key), vec![]);
+            m_tmp.with_extended_fields(convert_to_expire_ts(30), None, true);
+            m_tmp
+        } else {
+            Modify::Delete(
+                Self::rawkv_cf(&cf)?,
+                Key::from_encoded(key))
+        };
         self.engine.async_write(
             &ctx,
-            WriteData::from_modifies(vec![Modify::Delete(
-                Self::rawkv_cf(&cf)?,
-                Key::from_encoded(key),
-            )]),
+            WriteData::from_modifies(vec![m]),
             Box::new(|(_, res): (_, kv::Result<_>)| callback(res.map_err(Error::from))),
         )?;
         KV_COMMAND_COUNTER_VEC_STATIC.raw_delete.inc();
@@ -1860,7 +1870,8 @@ pub mod test_util {
     };
 
     pub fn expect_none(x: Option<Value>) {
-        assert_eq!(x, None);
+        let tmp_x = x;
+        assert_eq!(tmp_x, None);
     }
 
     pub fn expect_value(v: Vec<u8>, x: Option<Value>) {
@@ -3533,6 +3544,66 @@ mod tests {
         }
 
         rx.recv().unwrap();
+    }
+
+    #[test]
+    fn test_raw_delete_with_extend() {
+        let storage = TestStorageBuilder::new(DummyLockManager {}, true)
+            .build()
+            .unwrap();
+        let (tx, rx) = channel();
+
+        let test_data = [
+            (b"a", b"001"),
+            (b"b", b"002"),
+            (b"c", b"003"),
+            (b"d", b"004"),
+            (b"e", b"005"),
+        ];
+
+        // Write some key-value pairs to the db
+        for kv in &test_data {
+            storage
+                .raw_put(
+                    Context::default(),
+                    "".to_string(),
+                    kv.0.to_vec(),
+                    kv.1.to_vec(),
+                    30,
+                    expect_ok_callback(tx.clone(), 0),
+                )
+                .unwrap();
+            rx.recv().unwrap();
+        }
+
+        expect_value(
+            b"004".to_vec(),
+            block_on(storage.raw_get(Context::default(), "".to_string(), b"d".to_vec())).unwrap(),
+        );
+
+        // Delete "d" --> "004"
+        storage
+            .raw_delete(
+                Context::default(),
+                "".to_string(),
+                b"d".to_vec(),
+                expect_ok_callback(tx.clone(), 1),
+            )
+            .unwrap();
+        rx.recv().unwrap();
+
+        // Assert key "d" has gone
+        expect_value(
+            b"003".to_vec(),
+            block_on(storage.raw_get(Context::default(), "".to_string(), b"c".to_vec())).unwrap(),
+        );
+        expect_none(
+            block_on(storage.raw_get(Context::default(), "".to_string(), b"d".to_vec())).unwrap(),
+        );
+        expect_value(
+            b"005".to_vec(),
+            block_on(storage.raw_get(Context::default(), "".to_string(), b"e".to_vec())).unwrap(),
+        );
     }
 
     #[test]

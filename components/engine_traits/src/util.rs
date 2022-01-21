@@ -177,15 +177,15 @@ impl ExtendedFields {
 }
 
 #[inline]
-pub fn append_extended_fields(value: &mut Vec<u8>, expire_ts: u64, causal_ts: Option<TimeStamp>) {
-    let ext_fields = ExtendedFields::new(expire_ts, false, causal_ts);
+pub fn append_extended_fields(value: &mut Vec<u8>, expire_ts: u64, causal_ts: Option<TimeStamp>, id_deletion: bool) {
+    let ext_fields = ExtendedFields::new(expire_ts, id_deletion, causal_ts);
     ext_fields.append_to(value);
 }
 
 #[inline]
 pub fn append_expire_ts(value: &mut Vec<u8>, expire_ts: u64) {
     // value.encode_u64(expire_ts).unwrap();
-    append_extended_fields(value, expire_ts, None);
+    append_extended_fields(value, expire_ts, None, false);
 }
 
 #[inline]
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn test_extended_fields_emplace_causal_ts() {
         let mut value = b"value".to_vec();
-        append_extended_fields(&mut value, 100, Some(0.into()));
+        append_extended_fields(&mut value, 100, Some(0.into()), false);
         emplace_causal_ts(&mut value, 200.into()).unwrap();
 
         assert_eq!(get_causal_ts(&value), Some(200.into()));

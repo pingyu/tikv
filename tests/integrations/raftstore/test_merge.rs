@@ -1287,9 +1287,9 @@ fn test_server_merge_with_region_tso() {
     let ts = causal_ts.get_ts().unwrap();
 
     let mut v1 = b"v1".to_vec();
-    append_extended_fields(&mut v1, 0, Some(ts));
+    append_extended_fields(&mut v1, 0, Some(ts), false);
     let mut v3 = b"v3".to_vec();
-    append_extended_fields(&mut v3, 0, Some(ts));
+    append_extended_fields(&mut v3, 0, Some(ts), false);
 
     cluster.must_put(b"k1", &v1);
     cluster.must_put(b"k3", &v3);
@@ -1342,7 +1342,7 @@ fn test_server_merge_with_region_tso() {
     let ts1 = causal_ts.get_ts().unwrap();
     assert_ne!(ts1, ts);
     let mut v4 = b"v4".to_vec();
-    append_extended_fields(&mut v4, 0, Some(ts1));
+    append_extended_fields(&mut v4, 0, Some(ts1), false);
     cluster.must_put(b"k1", &v4);
 
     thread::sleep(Duration::from_millis(200));

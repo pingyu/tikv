@@ -92,9 +92,9 @@ impl Modify {
         };
     }
 
-    pub fn with_extended_fields(&mut self, expire_ts: u64, causal_ts: Option<TimeStamp>) {
+    pub fn with_extended_fields(&mut self, expire_ts: u64, causal_ts: Option<TimeStamp>, is_deletion: bool) {
         if let Modify::Put(_, _, ref mut v) = self {
-            append_extended_fields(v, expire_ts, causal_ts);
+            append_extended_fields(v, expire_ts, causal_ts, is_deletion);
         }
     }
 }
