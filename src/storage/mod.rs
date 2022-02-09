@@ -97,6 +97,8 @@ use txn_types::{Key, KvPair, Lock, Mutation, OldValues, TimeStamp, TsSet, Value}
 pub type Result<T> = std::result::Result<T, Error>;
 pub type Callback<T> = Box<dyn FnOnce(Result<T>) + Send>;
 
+const LIGCAL_DELETION_TTL_SEC : u64 = 24 * 3600;
+
 /// [`Storage`](Storage) implements transactional KV APIs and raw KV APIs on a given [`Engine`].
 /// An [`Engine`] provides low level KV functionality. [`Engine`] has multiple implementations.
 /// When a TiKV server is running, a [`RaftKv`](crate::server::raftkv::RaftKv) will be the
@@ -1301,17 +1303,47 @@ impl<E: Engine, L: LockManager> Storage<E, L> {
             let mut m_tmp = Modify::Put(
                 Self::rawkv_cf(&cf)?,
                 Key::from_encoded(key), vec![]);
-            m_tmp.with_extended_fields(convert_to_expire_ts(30), None, true);
+            m_tmp.with_extended_fields(convert_to_expire_ts(LIGCAL_DELETION_TTL_SEC), None, true);
             m_tmp
         } else {
             Modify::Delete(
                 Self::rawkv_cf(&cf)?,
                 Key::from_encoded(key))
         };
-        self.engine.async_write(
+
+        let causal_ts = self.causal_ts.clone();
+        let cm = self.concurrency_manager.clone();
+        let pre_propose_cb = Box::new(move |reqs: &mut [RaftPbRequest]| {
+            let mut is_first = true;
+            for req in reqs {
+                let mut get_ts = || -> Result<TimeStamp> {
+                    if is_first {
+                        let max_ts = cm.max_ts();
+                        causal_ts.advance(max_ts.next())?;
+                        is_first = false;
+                    }
+                    Ok(causal_ts.get_ts()?)
+                };
+
+                if req.has_put() {
+                    let ts = get_ts().unwrap(); // TODO: error handle
+                    emplace_causal_ts(req.mut_put().mut_value(), ts).unwrap(); // TODO: error handle
+                    debug!(
+                        "(rawkv)raw_delete::pre_propose_cb";
+                        "ts" => ts,
+                        "key" => &log_wrappers::Value::key(req.get_put().get_key()),
+                    );
+                }
+            }
+        });
+
+        self.engine.async_write_ext(
             &ctx,
             WriteData::from_modifies(vec![m]),
             Box::new(|(_, res): (_, kv::Result<_>)| callback(res.map_err(Error::from))),
+            Some(pre_propose_cb),
+            None,
+            None,
         )?;
         KV_COMMAND_COUNTER_VEC_STATIC.raw_delete.inc();
         Ok(())
