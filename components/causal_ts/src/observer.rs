@@ -5,19 +5,20 @@ use collections::HashMap;
 use engine_rocks::RocksEngine;
 use engine_traits::CfName;
 use kvproto::metapb::Region;
-use kvproto::raft_cmdpb::CmdType;
+use kvproto::raft_cmdpb::{CmdType, Request as RaftRequest};
 use parking_lot::RwLock;
 use raft::StateRole;
 use raftstore::coprocessor::{
     ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxRegionChangeObserver,
     BoxRoleObserver, CmdBatch, CmdObserver, Coprocessor, CoprocessorHost, ObserveLevel,
-    ObserverContext, RegionChangeObserver, RoleChange, RoleObserver,
+    ObserverContext, QueryObserver, RegionChangeObserver, RoleChange, RoleObserver,
 };
 use std::cmp;
 use std::sync::Arc;
+use raftstore::coprocessor;
 use txn_types::{Key, TimeStamp};
 
-use crate::CausalTsProvider;
+use crate::{CausalTsProvider, Error};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RegionCausalInfo {
@@ -71,7 +72,7 @@ impl RegionsCausalManager {
 #[derive(Clone)]
 pub struct CausalObserver {
     causal_manager: Arc<RegionsCausalManager>,
-    causal_ts: Arc<dyn CausalTsProvider>,
+    causal_ts_provider: Arc<dyn CausalTsProvider>,
 }
 
 // Causality is most important and should be done first.
@@ -80,11 +81,11 @@ const CAUSAL_OBSERVER_PRIORITY: u32 = 0;
 impl CausalObserver {
     pub fn new(
         causal_manager: Arc<RegionsCausalManager>,
-        causal_ts: Arc<dyn CausalTsProvider>,
+        causal_ts_provider: Arc<dyn CausalTsProvider>,
     ) -> Self {
         Self {
             causal_manager,
-            causal_ts,
+            causal_ts_provider,
         }
     }
 
@@ -107,6 +108,27 @@ impl CausalObserver {
 }
 
 impl Coprocessor for CausalObserver {}
+
+impl QueryObserver for CausalObserver {
+    fn pre_propose_query(
+        &self,
+        _: &mut ObserverContext<'_>,
+        requests: &mut Vec<RaftRequest>,
+    ) -> coprocessor::Result<()> {
+        let ts = self
+            .causal_ts_provider
+            .get_ts()
+            .map_err(|err| coprocessor::Error::Other(box_err!("Get causal timestamp error: {:?}", err)))?;
+
+        for req in requests.iter_mut().filter(|r| {
+            r.get_cmd_type() == CmdType::Put
+                && APIV2::parse_key_mode(r.get_put().get_key()) == KeyMode::Raw
+        }) {
+            APIV2::append_ts_on_encoded_bytes(req.mut_put().mut_key(), ts);
+        }
+        Ok(())
+    }
+}
 
 impl<E> CmdObserver<E> for CausalObserver {
     /// Observe cmd applied, to maintain maximum causal timestamp for every region.
@@ -164,7 +186,7 @@ impl CausalObserver {
         // Simply update to latest timestamp.
         // As extracting timestamp by snapshot scan will be expensive.
         // TODO: build and carry max timestamp with snapshot
-        let ts = self.causal_ts.get_ts().unwrap(); // will panic if un-initialized
+        let ts = self.causal_ts_provider.get_ts().unwrap(); // will panic if un-initialized
         self.causal_manager.update_max_ts(region_id, ts);
         debug!("CausalObserver::handle_snapshot"; "region" => region_id, "latest-ts" => ts);
     }
@@ -176,7 +198,7 @@ impl RoleObserver for CausalObserver {
         if role_change.state == StateRole::Leader {
             let region_id = ctx.region().get_id();
             let max_ts = self.causal_manager.max_ts(region_id);
-            self.causal_ts.advance(max_ts.next()).unwrap();
+            self.causal_ts_provider.advance(max_ts.next()).unwrap();
             debug!("CausalObserver::on_role_change: become leader & advance timestamp"; "region" => region_id, "max_ts" => max_ts);
         }
     }
