@@ -508,9 +508,9 @@ impl Delegate {
         statistics: &mut Statistics,
         is_one_pc: bool,
     ) -> Result<()> {
-        let txn_extra_op = self.txn_extra_op;
+        let flag = true;
 
-        let entries = if txn_extra_op == TxnExtraOp::RawKv {
+        let entries = if flag {
             self.sink_raw_data(requests)
         } else {
             self.sink_txn_data(
@@ -568,7 +568,6 @@ impl Delegate {
     ) -> Option<Vec<EventRow>> {
         debug_assert_eq!(self.txn_extra_op.load(), TxnExtraOp::ReadOldValue);
 
-        let txn_extra_op = self.txn_extra_op;
         let mut read_old_value = |row: &mut EventRow, read_old_ts| -> Result<()> {
             let key = Key::from_raw(&row.key).append_ts(row.start_ts.into());
             let old_value = old_value_cb(key, read_old_ts, old_value_cache, statistics)?;
@@ -579,9 +578,9 @@ impl Delegate {
         let mut rows: HashMap<Vec<u8>, EventRow> = HashMap::default();
         for mut req in requests {
             match req.get_cmd_type() {
-                CmdType::Put => {
-                    self.sink_put(req.take_put(), is_one_pc, &mut rows, &mut read_old_value);
-                }
+                CmdType::Put => self
+                    .sink_put(req.take_put(), is_one_pc, &mut rows, &mut read_old_value)
+                    .ok()?,
                 CmdType::Delete => self.sink_delete(req.take_delete()),
                 _ => {
                     debug!(
@@ -729,7 +728,7 @@ impl Delegate {
         }
     }
 
-    fn sink_raw_put(&mut self, mut put: PutRequest) -> EventRow {
+    fn sink_raw_put(&mut self, put: PutRequest) -> EventRow {
         match put.cf.as_str() {
             "" | "default" => {
                 let mut row = EventRow::default();
