@@ -4,6 +4,7 @@ use std::mem;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
+use api_version::{APIVersion, APIV2};
 use collections::HashMap;
 use crossbeam::atomic::AtomicCell;
 use kvproto::cdcpb::{
@@ -507,7 +508,67 @@ impl Delegate {
         statistics: &mut Statistics,
         is_one_pc: bool,
     ) -> Result<()> {
+        let txn_extra_op = self.txn_extra_op;
+
+        let entries = if txn_extra_op == TxnExtraOp::RawKv {
+            self.sink_raw_data(requests)
+        } else {
+            self.sink_txn_data(
+                requests,
+                old_value_cb,
+                old_value_cache,
+                statistics,
+                is_one_pc,
+            )
+        };
+
+        // Skip broadcast if there is no Put or Delete.
+        if entries.is_none() {
+            return Ok(());
+        }
+
+        let event_entries = EventEntries {
+            entries: entries.unwrap().into(),
+            ..Default::default()
+        };
+        let change_data_event = Event {
+            region_id: self.region_id,
+            index,
+            event: Some(Event_oneof_event::Entries(event_entries)),
+            ..Default::default()
+        };
+
+        let send = move |downstream: &Downstream| {
+            if downstream.state.load() != DownstreamState::Normal {
+                return Ok(());
+            }
+            let event = change_data_event.clone();
+            // Do not force send for real time change data events.
+            let force_send = false;
+            downstream.sink_event(event, force_send)
+        };
+
+        match self.broadcast(send) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.mark_failed();
+                Err(e)
+            }
+        }
+    }
+
+    fn sink_txn_data(
+        &mut self,
+        // index: u64,
+        requests: Vec<Request>,
+        old_value_cb: &OldValueCallback,
+        old_value_cache: &mut OldValueCache,
+        statistics: &mut Statistics,
+        is_one_pc: bool,
+    ) -> Option<Vec<EventRow>> {
         debug_assert_eq!(self.txn_extra_op.load(), TxnExtraOp::ReadOldValue);
+
+        let txn_extra_op = self.txn_extra_op;
         let mut read_old_value = |row: &mut EventRow, read_old_ts| -> Result<()> {
             let key = Key::from_raw(&row.key).append_ts(row.start_ts.into());
             let old_value = old_value_cb(key, read_old_ts, old_value_cache, statistics)?;
@@ -519,7 +580,7 @@ impl Delegate {
         for mut req in requests {
             match req.get_cmd_type() {
                 CmdType::Put => {
-                    self.sink_put(req.take_put(), is_one_pc, &mut rows, &mut read_old_value)?;
+                    self.sink_put(req.take_put(), is_one_pc, &mut rows, &mut read_old_value);
                 }
                 CmdType::Delete => self.sink_delete(req.take_delete()),
                 _ => {
@@ -533,38 +594,14 @@ impl Delegate {
         }
         // Skip broadcast if there is no Put or Delete.
         if rows.is_empty() {
-            return Ok(());
+            return None;
         }
         let mut entries = Vec::with_capacity(rows.len());
         for (_, v) in rows {
             entries.push(v);
         }
-        let event_entries = EventEntries {
-            entries: entries.into(),
-            ..Default::default()
-        };
-        let change_data_event = Event {
-            region_id: self.region_id,
-            index,
-            event: Some(Event_oneof_event::Entries(event_entries)),
-            ..Default::default()
-        };
-        let send = move |downstream: &Downstream| {
-            if downstream.state.load() != DownstreamState::Normal {
-                return Ok(());
-            }
-            let event = change_data_event.clone();
-            // Do not force send for real time change data events.
-            let force_send = false;
-            downstream.sink_event(event, force_send)
-        };
-        match self.broadcast(send) {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                self.mark_failed();
-                Err(e)
-            }
-        }
+
+        Some(entries)
     }
 
     fn sink_put(
@@ -663,6 +700,57 @@ impl Delegate {
             }
         }
         Ok(())
+    }
+
+    fn sink_raw_data(&mut self, requests: Vec<Request>) -> Option<Vec<EventRow>> {
+        let mut entries = Vec::new();
+        for mut req in requests {
+            match req.get_cmd_type() {
+                CmdType::Put => {
+                    entries.push(self.sink_raw_put(req.take_put()));
+                }
+                CmdType::Delete => {
+                    // TODO: self.sink_delete(req.take_delete())
+                }
+                _ => {
+                    debug!(
+                        "skip other command";
+                        "region_id" => self.region_id,
+                        "command" => ?req,
+                    );
+                }
+            }
+        }
+        warn!("rawkvtrace: cdc::Delegate::sink_raw_data"; "entries" => ?entries);
+        if entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        }
+    }
+
+    fn sink_raw_put(&mut self, mut put: PutRequest) -> EventRow {
+        match put.cf.as_str() {
+            "" | "default" => {
+                let mut row = EventRow::default();
+                let (key, ts) = APIV2::decode_raw_key(&Key::from_raw(put.get_key()), true).unwrap();
+                row.commit_ts = ts.unwrap().into_inner(); // would be no causal timestamp on data written by old version.
+
+                row.start_ts = row.commit_ts;
+                row.key = key;
+                row.value = put.get_value().to_vec();
+                row.op_type = EventRowOpType::Put;
+                set_event_row_type(&mut row, EventLogType::Committed);
+
+                // TODO: validate commit_ts must be greater than the current resolved_ts
+
+                warn!("cdc::Delegate::sink_raw_put"; "row" => ?row);
+                row
+            }
+            other => {
+                panic!("invalid cf {}", other);
+            }
+        }
     }
 
     fn sink_delete(&mut self, mut delete: DeleteRequest) {
