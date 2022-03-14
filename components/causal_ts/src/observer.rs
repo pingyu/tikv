@@ -4,18 +4,19 @@ use collections::HashMap;
 use engine_rocks::RocksEngine;
 use engine_traits::CfName;
 use kvproto::metapb::Region;
-use kvproto::raft_cmdpb::CmdType;
+use kvproto::raft_cmdpb::{CmdType, Request as RaftRequest};
 use raft::StateRole;
 use raftstore::coprocessor::{
-    ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxRegionChangeObserver,
-    BoxRoleObserver, CmdBatch, CmdObserver, Coprocessor, CoprocessorHost, ObserveLevel,
-    ObserverContext, RegionChangeObserver, RoleObserver,
+    ApplySnapshotObserver, BoxApplySnapshotObserver, BoxCmdObserver, BoxQueryObserver,
+    BoxRegionChangeObserver, BoxRoleObserver, CmdBatch, CmdObserver, Coprocessor, CoprocessorHost,
+    ObserveLevel, ObserverContext, QueryObserver, RegionChangeObserver, RoleChange, RoleObserver,
 };
 use std::cmp;
 use tikv_util::HandyRwLock;
 use txn_types::{Key, TimeStamp};
 
 use api_version::{APIVersion, KeyMode, APIV2};
+use raftstore::coprocessor;
 use std::sync::{Arc, RwLock};
 
 use crate::CausalTsProvider;
@@ -90,6 +91,10 @@ impl CausalObserver {
     }
 
     pub fn register_to(&self, coprocessor_host: &mut CoprocessorHost<RocksEngine>) {
+        coprocessor_host.registry.register_query_observer(
+            CAUSAL_OBSERVER_PRIORITY,
+            BoxQueryObserver::new(self.clone()),
+        );
         coprocessor_host
             .registry
             .register_cmd_observer(CAUSAL_OBSERVER_PRIORITY, BoxCmdObserver::new(self.clone()));
@@ -108,6 +113,26 @@ impl CausalObserver {
 }
 
 impl Coprocessor for CausalObserver {}
+
+impl QueryObserver for CausalObserver {
+    fn pre_propose_query(
+        &self,
+        _: &mut ObserverContext<'_>,
+        requests: &mut Vec<RaftRequest>,
+    ) -> coprocessor::Result<()> {
+        let ts = self.causal_ts.get_ts().map_err(|err| {
+            coprocessor::Error::Other(box_err!("Get causal timestamp error: {:?}", err))
+        })?;
+
+        for req in requests.iter_mut().filter(|r| {
+            r.get_cmd_type() == CmdType::Put
+                && APIV2::parse_key_mode(r.get_put().get_key()) == KeyMode::Raw
+        }) {
+            APIV2::append_ts_on_encoded_bytes(req.mut_put().mut_key(), ts);
+        }
+        Ok(())
+    }
+}
 
 impl<E> CmdObserver<E> for CausalObserver {
     /// Observe cmd applied, to maintain maximum causal timestamp for every region.
@@ -173,8 +198,8 @@ impl CausalObserver {
 
 impl RoleObserver for CausalObserver {
     /// Observe becoming leader, to advance CausalTsProvider not less than this region.
-    fn on_role_change(&self, ctx: &mut ObserverContext<'_>, role: StateRole) {
-        if role == StateRole::Leader {
+    fn on_role_change(&self, ctx: &mut ObserverContext<'_>, role_change: &RoleChange) {
+        if role_change.state == StateRole::Leader {
             let region_id = ctx.region().get_id();
             let max_ts = self.causal_manager.max_ts(region_id);
             self.causal_ts.advance(max_ts.next()).unwrap();

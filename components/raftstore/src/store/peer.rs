@@ -3739,9 +3739,9 @@ where
         &mut self,
         poll_ctx: &mut PollContext<EK, ER, T>,
         req: &mut RaftCmdRequest,
-        cb: &mut Callback<EK::Snapshot>,
+        _cb: &mut Callback<EK::Snapshot>,
     ) -> Result<ProposalContext> {
-        cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
+        // cb.invoke_pre_propose(req.mut_requests().as_mut_slice());
         poll_ctx.coprocessor_host.pre_propose(self.region(), req)?;
         let mut ctx = ProposalContext::empty();
 
