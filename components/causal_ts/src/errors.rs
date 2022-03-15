@@ -11,6 +11,8 @@ pub enum Error {
     Pd(#[from] pd_client::Error),
     #[error("TSO {0}")]
     Tso(String),
+    #[error("TSO batch used up")]
+    TsoBatchUsedUp,
     #[error("HLC {0}")]
     Hlc(String),
     #[error("unknown error {0:?}")]
@@ -24,6 +26,7 @@ impl ErrorCodeExt for Error {
         match self {
             Error::Pd(_) => error_code::causal_ts::PD,
             Error::Tso(_) => error_code::causal_ts::TSO,
+            Error::TsoBatchUsedUp => error_code::causal_ts::TSO_BATCH_USED_UP,
             Error::Hlc(_) => error_code::causal_ts::HLC,
             Error::Other(_) => error_code::UNKNOWN,
         }

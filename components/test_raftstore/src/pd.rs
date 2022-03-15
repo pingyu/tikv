@@ -1631,7 +1631,7 @@ impl PdClient for TestPdClient {
         Ok(resp)
     }
 
-    fn get_tso(&self) -> PdFuture<TimeStamp> {
+    fn batch_get_tso(&self, count: u32) -> PdFuture<TimeStamp> {
         fail_point!("test_raftstore_get_tso", |t| {
             let duration = Duration::from_millis(t.map_or(1000, |t| t.parse().unwrap()));
             Box::pin(async move {
@@ -1650,7 +1650,7 @@ impl PdClient for TestPdClient {
                 )),
             )));
         }
-        let tso = self.tso.fetch_add(1, Ordering::SeqCst);
+        let tso = self.tso.fetch_add(count as u64, Ordering::SeqCst);
         Box::pin(ok(TimeStamp::new(tso)))
     }
 

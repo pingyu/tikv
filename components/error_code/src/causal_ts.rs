@@ -5,6 +5,7 @@ define_error_codes!(
 
     PD => ("PdClient", "", ""),
     TSO => ("TSO", "", ""),
+    TSO_BATCH_USED_UP => ("TsoBatchUsedUp", "", ""),
     HLC => ("HLC", "", ""),
 
     UNKNOWN => ("Unknown", "", "")
