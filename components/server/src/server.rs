@@ -673,9 +673,13 @@ impl<ER: RaftEngine> TiKVServer<ER> {
                 // if let Err(e) = block_on(hlc.init()) {
                 //     panic!("Causal timestamp provider initialize failed: {:?}", e);
                 // }
-                let tso = causal_ts::TsoSimpleProvider::new(self.pd_client.clone());
+                // let tso = causal_ts::TsoSimpleProvider::new(self.pd_client.clone());
+                let tso = block_on(causal_ts::CachedTsoProvider::new(self.pd_client.clone()));
+                if let Err(e) = tso {
+                    panic!("Causal timestamp provider initialize failed: {:?}", e);
+                }
                 info!("Causal timestamp startup.");
-                Some(Arc::new(tso))
+                Some(Arc::new(tso.unwrap()))
             } else {
                 None
             };
