@@ -735,10 +735,16 @@ impl Delegate {
                 let (key, ts) = APIV2::decode_raw_key(&Key::from_raw(put.get_key()), true).unwrap();
                 row.commit_ts = ts.unwrap().into_inner(); // would be no causal timestamp on data written by old version.
 
+                let raw_value = APIV2::decode_raw_value_owned(put.get_value().to_vec()).unwrap();
+
                 row.start_ts = row.commit_ts;
                 row.key = key;
-                row.value = put.get_value().to_vec();
-                row.op_type = EventRowOpType::Put;
+                row.value = raw_value.user_value.to_vec();
+                if raw_value.is_delete {
+                    row.op_type = EventRowOpType::Delete;
+                } else {
+                    row.op_type = EventRowOpType::Put;
+                }
                 set_event_row_type(&mut row, EventLogType::Committed);
 
                 // TODO: validate commit_ts must be greater than the current resolved_ts
