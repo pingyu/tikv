@@ -733,7 +733,7 @@ impl Delegate {
             "" | "default" => {
                 let mut row = EventRow::default();
                 let (key, ts) =
-                    APIV2::decode_raw_key_owned(Key::from_raw(put.get_key()), true).unwrap();
+                    APIV2::decode_raw_key_owned(Key::from_encoded(put.take_key()), true).unwrap();
                 row.commit_ts = ts.unwrap().into_inner(); // would be no causal timestamp on data written by old version.
 
                 let raw_value = APIV2::decode_raw_value_owned(put.get_value().to_vec()).unwrap();
