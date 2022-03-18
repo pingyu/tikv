@@ -728,7 +728,7 @@ impl Delegate {
         }
     }
 
-    fn sink_raw_put(&mut self, put: PutRequest) -> EventRow {
+    fn sink_raw_put(&mut self, mut put: PutRequest) -> EventRow {
         match put.cf.as_str() {
             "" | "default" => {
                 let mut row = EventRow::default();
