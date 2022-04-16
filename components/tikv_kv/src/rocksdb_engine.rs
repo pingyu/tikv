@@ -14,8 +14,7 @@ use engine_traits::{
     Engines, IterOptions, Iterable, Iterator, KvEngine, Peekable, ReadOptions, SeekKey,
 };
 use file_system::IORateLimiter;
-use kvproto::{kvrpcpb::Context, metapb, raft_cmdpb};
-use raftstore::coprocessor::CoprocessorHost;
+use kvproto::kvrpcpb::Context;
 use tempfile::{Builder, TempDir};
 use txn_types::{Key, Value};
 
@@ -82,7 +81,6 @@ pub struct RocksEngine {
     sched: Scheduler<Task>,
     engines: Engines<BaseRocksEngine, BaseRocksEngine>,
     not_leader: Arc<AtomicBool>,
-    coprocessor: CoprocessorHost<BaseRocksEngine>,
 }
 
 impl RocksEngine {
@@ -127,7 +125,6 @@ impl RocksEngine {
             core: Arc::new(Mutex::new(RocksEngineCore { temp_dir, worker })),
             not_leader: Arc::new(AtomicBool::new(false)),
             engines,
-            coprocessor: CoprocessorHost::default(),
         })
     }
 
@@ -192,7 +189,7 @@ impl Engine for RocksEngine {
     fn async_write_ext(
         &self,
         _: &Context,
-        mut batch: WriteData,
+        batch: WriteData,
         cb: Callback<()>,
         proposed_cb: Option<ExtCallback>,
         committed_cb: Option<ExtCallback>,
@@ -202,25 +199,6 @@ impl Engine for RocksEngine {
         if batch.modifies.is_empty() {
             return Err(Error::from(ErrorInner::EmptyRequest));
         }
-
-        // Trigger "pre_propose_query" observers for RawKV API V2.
-        let requests = batch
-            .modifies
-            .into_iter()
-            .map(Into::into)
-            .collect::<Vec<_>>();
-        let mut cmd_req = raft_cmdpb::RaftCmdRequest::default();
-        cmd_req.set_requests(requests.into());
-        let mut region = metapb::Region::default();
-        region.set_id(1);
-        self.coprocessor
-            .pre_propose(&region, &mut cmd_req)
-            .map_err(|err| Error::from(ErrorInner::Other(box_err!(err))))?;
-        batch.modifies = cmd_req
-            .take_requests()
-            .into_iter()
-            .map(Into::into)
-            .collect::<Vec<_>>();
 
         if let Some(cb) = proposed_cb {
             cb();
@@ -249,10 +227,6 @@ impl Engine for RocksEngine {
         }
         box_try!(self.sched.schedule(Task::Snapshot(cb)));
         Ok(())
-    }
-
-    fn mut_coprocessor(&mut self) -> Option<&mut CoprocessorHost<BaseRocksEngine>> {
-        Some(&mut self.coprocessor)
     }
 }
 

@@ -105,7 +105,7 @@ use std::{
         Arc,
     },
 };
-use tikv_kv::SnapshotExt;
+use tikv_kv::{CoprocessorEngine, SnapshotExt};
 use tikv_util::quota_limiter::QuotaLimiter;
 use tikv_util::time::{duration_to_ms, Instant, ThreadReadId};
 use txn_types::{Key, KvPair, Lock, OldValues, TimeStamp, TsSet, Value};
@@ -2828,25 +2828,24 @@ impl<E: Engine, L: LockManager, Api: APIVersion> TestStorageBuilder<E, L, Api> {
         self
     }
 
-    fn register_causal_observer(&mut self) {
-        if let (ApiVersion::V2, Some(coprocessor)) = (Api::TAG, self.engine.mut_coprocessor()) {
-            let causal_ts_provider = Arc::new(causal_ts::tests::TestProvider::default());
-            let causal_ob = causal_ts::CausalObserver::new(causal_ts_provider);
-            causal_ob.register_to(coprocessor);
-        }
-    }
-
     /// Build a `Storage<E>`.
-    pub fn build(mut self) -> Result<Storage<E, L, Api>> {
+    pub fn build(self) -> Result<Storage<CoprocessorEngine<E>, L, Api>> {
         let read_pool = build_read_pool_for_test(
             &crate::config::StorageReadPoolConfig::default_for_test(),
             self.engine.clone(),
         );
-        // invoke here, as there are two entries to create `TestStorageBuilder` (`new` & `from_engine_and_lock_mgr`)
-        self.register_causal_observer();
+
+        let mut engine = CoprocessorEngine::from_engine(self.engine);
+
+        // Register causal observer for RawKV API V2.
+        if Api::TAG == ApiVersion::V2 {
+            let causal_ts_provider = Arc::new(causal_ts::tests::TestProvider::default());
+            let causal_ob = causal_ts::CausalObserver::new(causal_ts_provider);
+            engine.register_observer(|host| causal_ob.register_to(host));
+        }
 
         Storage::from_engine(
-            self.engine,
+            engine,
             &self.config,
             ReadPool::from(read_pool).handle(),
             self.lock_mgr,
@@ -4813,9 +4812,9 @@ mod tests {
         }
     }
 
-    fn run_raw_batch_put<Api: APIVersion>(
+    fn run_raw_batch_put<E: Engine, Api: APIVersion>(
         for_cas: bool,
-        storage: &Storage<RocksEngine, DummyLockManager, Api>,
+        storage: &Storage<E, DummyLockManager, Api>,
         ctx: Context,
         kvpairs: Vec<KvPair>,
         ttls: Vec<u64>,
@@ -5020,9 +5019,9 @@ mod tests {
         }
     }
 
-    fn run_raw_batch_delete<Api: APIVersion>(
+    fn run_raw_batch_delete<E: Engine, Api: APIVersion>(
         for_cas: bool,
-        storage: &Storage<RocksEngine, DummyLockManager, Api>,
+        storage: &Storage<E, DummyLockManager, Api>,
         ctx: Context,
         keys: Vec<Vec<u8>>,
         cb: Callback<()>,

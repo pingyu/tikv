@@ -3624,7 +3624,7 @@ mod tests {
     use slog::Level;
     use std::sync::Arc;
     use std::time::Duration;
-    use tikv_kv::RocksEngine as RocksDBEngine;
+    use tikv_kv::{CoprocessorRocksEngine, RocksEngine as RocksDBEngine};
     use tikv_util::quota_limiter::{QuotaLimitConfigManager, QuotaLimiter};
     use tikv_util::sys::SysQuota;
     use tikv_util::worker::{dummy_scheduler, ReceiverWrapper};
@@ -3960,7 +3960,7 @@ mod tests {
     fn new_engines<Api: APIVersion>(
         cfg: TiKvConfig,
     ) -> (
-        Storage<RocksDBEngine, DummyLockManager, Api>,
+        Storage<CoprocessorRocksEngine, DummyLockManager, Api>,
         ConfigController,
         ReceiverWrapper<TTLCheckerTask>,
         Arc<FlowController>,

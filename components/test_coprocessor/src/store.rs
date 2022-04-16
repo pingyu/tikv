@@ -13,7 +13,7 @@ use tidb_query_datatype::expr::EvalContext;
 use tikv::server::gc_worker::GcConfig;
 use tikv::storage::lock_manager::DummyLockManager;
 use tikv::storage::{
-    kv::{Engine, RocksEngine},
+    kv::{CoprocessorEngine, Engine, RocksEngine},
     txn::FixtureStore,
     SnapshotStore, StorageApiV1, TestStorageBuilderApiV1,
 };
@@ -127,7 +127,7 @@ impl Default for Store<RocksEngine> {
 }
 
 impl<E: Engine> Store<E> {
-    pub fn from_storage(storage: StorageApiV1<E, DummyLockManager>) -> Self {
+    pub fn from_storage(storage: StorageApiV1<CoprocessorEngine<E>, DummyLockManager>) -> Self {
         Self {
             store: SyncTestStorageApiV1::from_storage(storage, GcConfig::default()).unwrap(),
             current_ts: 1.into(),
@@ -190,7 +190,7 @@ impl<E: Engine> Store<E> {
         self.commit_with_ctx(Context::default());
     }
 
-    pub fn get_engine(&self) -> E {
+    pub fn get_engine(&self) -> CoprocessorEngine<E> {
         self.store.get_engine()
     }
 

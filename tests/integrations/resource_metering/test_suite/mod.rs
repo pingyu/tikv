@@ -22,7 +22,9 @@ use tempfile::TempDir;
 use test_util::alloc_port;
 use tikv::config::{ConfigController, TiKvConfig};
 use tikv::storage::lock_manager::DummyLockManager;
-use tikv::storage::{RocksEngine, StorageApiV1, TestEngineBuilder, TestStorageBuilderApiV1};
+use tikv::storage::{
+    kv::CoprocessorRocksEngine, StorageApiV1, TestEngineBuilder, TestStorageBuilderApiV1,
+};
 use tokio::runtime::{self, Runtime};
 use txn_types::{Key, TimeStamp};
 
@@ -30,7 +32,7 @@ pub struct TestSuite {
     pubsub_server_port: u16,
     receiver_server: Option<MockReceiverServer>,
 
-    storage: StorageApiV1<RocksEngine, DummyLockManager>,
+    storage: StorageApiV1<CoprocessorRocksEngine, DummyLockManager>,
     cfg_controller: ConfigController,
     resource_tag_factory: ResourceTagFactory,
 
@@ -116,7 +118,7 @@ impl TestSuite {
         }
     }
 
-    pub fn get_storage(&self) -> StorageApiV1<RocksEngine, DummyLockManager> {
+    pub fn get_storage(&self) -> StorageApiV1<CoprocessorRocksEngine, DummyLockManager> {
         self.storage.clone()
     }
 

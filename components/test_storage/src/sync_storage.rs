@@ -11,7 +11,7 @@ use raftstore::coprocessor::RegionInfoProvider;
 use raftstore::router::RaftStoreBlackHole;
 use tikv::server::gc_worker::{AutoGcConfig, GcConfig, GcSafePointProvider, GcWorker};
 use tikv::storage::config::Config;
-use tikv::storage::kv::RocksEngine;
+use tikv::storage::kv::{CoprocessorEngine, RocksEngine};
 use tikv::storage::lock_manager::DummyLockManager;
 use tikv::storage::{
     test_util::GetConsumer, txn::commands, Engine, KvGetStatistics, PrewriteResult, Result,
@@ -94,8 +94,8 @@ impl<E: Engine, Api: APIVersion> SyncTestStorageBuilder<E, Api> {
 /// Only used for test purpose.
 #[derive(Clone)]
 pub struct SyncTestStorage<E: Engine, Api: APIVersion> {
-    gc_worker: GcWorker<E, RaftStoreBlackHole>,
-    store: Storage<E, DummyLockManager, Api>,
+    gc_worker: GcWorker<CoprocessorEngine<E>, RaftStoreBlackHole>,
+    store: Storage<CoprocessorEngine<E>, DummyLockManager, Api>,
 }
 
 /// SyncTestStorage for Api V1
@@ -104,7 +104,7 @@ pub type SyncTestStorageApiV1<E> = SyncTestStorage<E, APIV1>;
 
 impl<E: Engine, Api: APIVersion> SyncTestStorage<E, Api> {
     pub fn from_storage(
-        storage: Storage<E, DummyLockManager, Api>,
+        storage: Storage<CoprocessorEngine<E>, DummyLockManager, Api>,
         config: GcConfig,
     ) -> Result<Self> {
         let (tx, _rx) = std::sync::mpsc::channel();
@@ -131,11 +131,11 @@ impl<E: Engine, Api: APIVersion> SyncTestStorage<E, Api> {
             .unwrap();
     }
 
-    pub fn get_storage(&self) -> Storage<E, DummyLockManager, Api> {
+    pub fn get_storage(&self) -> Storage<CoprocessorEngine<E>, DummyLockManager, Api> {
         self.store.clone()
     }
 
-    pub fn get_engine(&self) -> E {
+    pub fn get_engine(&self) -> CoprocessorEngine<E> {
         self.store.get_engine()
     }
 
