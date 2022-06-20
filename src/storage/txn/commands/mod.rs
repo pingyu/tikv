@@ -56,7 +56,7 @@ use crate::storage::{
     lock_manager::{self, LockManager, WaitTimeout},
     metrics,
     mvcc::{Lock as MvccLock, MvccReader, ReleasedLock, SnapshotReader},
-    txn::{latch, ProcessResult, Result},
+    txn::{commands::atomic_store::RawPut, latch, ProcessResult, Result},
     types::{
         MvccInfo, PessimisticLockRes, PrewriteResult, SecondaryLocksStatus, StorageCallbackType,
         TxnStatus,
@@ -90,6 +90,7 @@ pub enum Command {
     MvccByStartTs(MvccByStartTs),
     RawCompareAndSwap(RawCompareAndSwap),
     RawAtomicStore(RawAtomicStore),
+    RawPut(RawPut),
 }
 
 /// A `Command` with its return type, reified as the generic parameter `T`.
@@ -558,6 +559,7 @@ impl Command {
             Command::MvccByStartTs(t) => t,
             Command::RawCompareAndSwap(t) => t,
             Command::RawAtomicStore(t) => t,
+            Command::RawPut(t) => t,
         }
     }
 
@@ -581,6 +583,7 @@ impl Command {
             Command::MvccByStartTs(t) => t,
             Command::RawCompareAndSwap(t) => t,
             Command::RawAtomicStore(t) => t,
+            Command::RawPut(t) => t,
         }
     }
 
@@ -618,6 +621,7 @@ impl Command {
             Command::Pause(t) => t.process_write(snapshot, context),
             Command::RawCompareAndSwap(t) => t.process_write(snapshot, context),
             Command::RawAtomicStore(t) => t.process_write(snapshot, context),
+            Command::RawPut(t) => t.process_write(snapshot, context),
             _ => panic!("unsupported write command"),
         }
     }

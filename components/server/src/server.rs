@@ -667,6 +667,27 @@ impl<ER: RaftEngine> TiKvServer<ER> {
             storage_read_pools.handle()
         };
 
+        // Register causal observer for RawKV API V2
+        let causal_ts_provider = if let ApiVersion::V2 = F::TAG {
+            let tso = block_on(causal_ts::BatchTsoProvider::new_opt(
+                self.pd_client.clone(),
+                self.config.causal_ts.renew_interval.0,
+                self.config.causal_ts.renew_batch_min_size,
+            ));
+            if let Err(e) = tso {
+                panic!("Causal timestamp provider initialize failed: {:?}", e);
+            }
+            let causal_ts_provider = Arc::new(tso.unwrap());
+            info!("Causal timestamp provider startup.");
+
+            let causal_ob = causal_ts::CausalObserver::new(causal_ts_provider.clone());
+            causal_ob.register_to(self.coprocessor_host.as_mut().unwrap());
+
+            Some(causal_ts_provider)
+        } else {
+            None
+        };
+
         let storage = create_raft_storage::<_, _, _, F>(
             engines.engine.clone(),
             &self.config.storage,
@@ -679,6 +700,7 @@ impl<ER: RaftEngine> TiKvServer<ER> {
             resource_tag_factory.clone(),
             Arc::clone(&self.quota_limiter),
             self.pd_client.feature_gate().clone(),
+            causal_ts_provider,
         )
         .unwrap_or_else(|e| fatal!("failed to create raft storage: {}", e));
         cfg_controller.register(
@@ -737,23 +759,6 @@ impl<ER: RaftEngine> TiKvServer<ER> {
                     unified_read_pool.as_ref().unwrap().handle(),
                 )),
             );
-        }
-
-        // Register causal observer for RawKV API V2
-        if let ApiVersion::V2 = F::TAG {
-            let tso = block_on(causal_ts::BatchTsoProvider::new_opt(
-                self.pd_client.clone(),
-                self.config.causal_ts.renew_interval.0,
-                self.config.causal_ts.renew_batch_min_size,
-            ));
-            if let Err(e) = tso {
-                panic!("Causal timestamp provider initialize failed: {:?}", e);
-            }
-            let causal_ts_provider = Arc::new(tso.unwrap());
-            info!("Causal timestamp provider startup.");
-
-            let causal_ob = causal_ts::CausalObserver::new(causal_ts_provider);
-            causal_ob.register_to(self.coprocessor_host.as_mut().unwrap());
         }
 
         // Register cdc.

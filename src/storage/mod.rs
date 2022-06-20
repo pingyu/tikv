@@ -105,7 +105,7 @@ use crate::{
         metrics::{CommandKind, *},
         mvcc::{MvccReader, PointGetterBuilder},
         txn::{
-            commands::{RawAtomicStore, RawCompareAndSwap, TypedCommand},
+            commands::{atomic_store::RawPut, RawAtomicStore, RawCompareAndSwap, TypedCommand},
             flow_controller::FlowController,
             scheduler::Scheduler as TxnScheduler,
             Command,
@@ -163,6 +163,8 @@ pub struct Storage<E: Engine, L: LockManager, F: KvFormat> {
 
     quota_limiter: Arc<QuotaLimiter>,
 
+    causal_ts_provider: Option<Arc<causal_ts::BatchTsoProvider<pd_client::RpcClient>>>,
+
     _phantom: PhantomData<F>,
 }
 
@@ -189,6 +191,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> Clone for Storage<E, L, F> {
             api_version: self.api_version,
             resource_tag_factory: self.resource_tag_factory.clone(),
             quota_limiter: Arc::clone(&self.quota_limiter),
+            causal_ts_provider: self.causal_ts_provider.as_ref().cloned(),
             _phantom: PhantomData,
         }
     }
@@ -240,6 +243,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> Storage<E, L, F> {
         resource_tag_factory: ResourceTagFactory,
         quota_limiter: Arc<QuotaLimiter>,
         feature_gate: FeatureGate,
+        causal_ts_provider: Option<Arc<causal_ts::BatchTsoProvider<pd_client::RpcClient>>>,
     ) -> Result<Self> {
         assert_eq!(config.api_version(), F::TAG, "Api version not match");
 
@@ -268,6 +272,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> Storage<E, L, F> {
             api_version: config.api_version(),
             resource_tag_factory,
             quota_limiter,
+            causal_ts_provider,
             _phantom: PhantomData,
         })
     }
@@ -1776,27 +1781,43 @@ impl<E: Engine, L: LockManager, F: KvFormat> Storage<E, L, F> {
             return Err(Error::from(ErrorInner::TtlNotEnabled));
         }
 
-        let raw_value = RawValue {
-            user_value: value,
-            expire_ts: ttl_to_expire_ts(ttl),
-            is_delete: false,
-        };
-        let m = Modify::Put(
-            Self::rawkv_cf(&cf, self.api_version)?,
-            F::encode_raw_key_owned(key, None),
-            F::encode_raw_value_owned(raw_value),
+        // let raw_value = RawValue {
+        //     user_value: value,
+        //     expire_ts: ttl_to_expire_ts(ttl),
+        //     is_delete: false,
+        // };
+        // let m = Modify::Put(
+        //     Self::rawkv_cf(&cf, self.api_version)?,
+        //     F::encode_raw_key_owned(key, ts),
+        //     F::encode_raw_value_owned(raw_value),
+        // );
+        //
+        // let mut batch = WriteData::from_modifies(vec![m]);
+        // batch.set_allowed_on_disk_almost_full();
+        //
+        // self.engine.async_write(
+        //     &ctx,
+        //     batch,
+        //     Box::new(move |res| {
+        //         // if let Some(guard) = guard {
+        //         //     drop(guard);
+        //         // }
+        //         callback(res.map_err(Error::from))
+        //     }),
+        // )?;
+        // KV_COMMAND_COUNTER_VEC_STATIC.raw_put.inc();
+        // Ok(())
+
+        let cf = Self::rawkv_cf(&cf, self.api_version)?;
+        let cmd = RawPut::new(
+            cf,
+            key,
+            value,
+            ttl,
+            self.causal_ts_provider.as_ref().cloned(),
+            ctx,
         );
-
-        let mut batch = WriteData::from_modifies(vec![m]);
-        batch.set_allowed_on_disk_almost_full();
-
-        self.engine.async_write(
-            &ctx,
-            batch,
-            Box::new(|res| callback(res.map_err(Error::from))),
-        )?;
-        KV_COMMAND_COUNTER_VEC_STATIC.raw_put.inc();
-        Ok(())
+        self.sched_txn_command(cmd, callback)
     }
 
     fn raw_batch_put_requests_to_modifies(
@@ -2818,6 +2839,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> TestStorageBuilder<E, L, F> {
             self.resource_tag_factory,
             Arc::new(QuotaLimiter::default()),
             latest_feature_gate(),
+            None,
         )
     }
 
@@ -2846,6 +2868,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> TestStorageBuilder<E, L, F> {
             ResourceTagFactory::new_for_test(),
             Arc::new(QuotaLimiter::default()),
             latest_feature_gate(),
+            None,
         )
     }
 }

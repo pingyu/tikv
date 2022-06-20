@@ -136,11 +136,12 @@ impl TaskContext {
     fn new(task: Task, cb: StorageCallback) -> TaskContext {
         let tag = task.cmd.tag();
         let lock = task.cmd.gen_lock();
+        let is_raw_put = matches!(task.cmd, Command::RawPut(..));
         // Write command should acquire write lock.
-        if !task.cmd.readonly() && !lock.is_write_lock() {
+        if !task.cmd.readonly() && !lock.is_write_lock() && !is_raw_put {
             panic!("write lock is expected for command {}", task.cmd);
         }
-        let write_bytes = if lock.is_write_lock() {
+        let write_bytes = if lock.is_write_lock() || is_raw_put {
             task.cmd.write_bytes()
         } else {
             0

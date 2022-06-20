@@ -389,6 +389,7 @@ impl ServerCluster {
             res_tag_factory.clone(),
             quota_limiter.clone(),
             self.pd_client.feature_gate().clone(),
+            None,
         )?;
         self.storages.insert(node_id, raft_engine);
 

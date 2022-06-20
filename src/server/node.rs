@@ -59,6 +59,7 @@ pub fn create_raft_storage<S, EK, R: FlowStatsReporter, F: KvFormat>(
     resource_tag_factory: ResourceTagFactory,
     quota_limiter: Arc<QuotaLimiter>,
     feature_gate: FeatureGate,
+    causal_ts_provider: Option<Arc<causal_ts::BatchTsoProvider<pd_client::RpcClient>>>,
 ) -> Result<Storage<RaftKv<EK, S>, LockManager, F>>
 where
     S: RaftStoreRouter<EK> + LocalReadRouter<EK> + 'static,
@@ -76,6 +77,7 @@ where
         resource_tag_factory,
         quota_limiter,
         feature_gate,
+        causal_ts_provider,
     )?;
     Ok(store)
 }
