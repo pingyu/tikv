@@ -2,6 +2,7 @@
 
 pub mod encoded;
 pub mod raw_mvcc;
+pub mod scheduler;
 mod store;
 
 pub use store::RawStore;

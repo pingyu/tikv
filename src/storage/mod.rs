@@ -106,6 +106,7 @@ use crate::{
         lock_manager::{DummyLockManager, LockManager},
         metrics::{CommandKind, *},
         mvcc::{MvccReader, PointGetterBuilder},
+        raw::scheduler::RawScheduler,
         txn::{
             commands::{RawAtomicStore, RawCompareAndSwap, TypedCommand},
             flow_controller::{EngineFlowController, FlowController},
@@ -113,6 +114,7 @@ use crate::{
             Command,
         },
         types::StorageCallbackType,
+        TxnStatus::Committed,
     },
 };
 
@@ -145,6 +147,7 @@ pub struct Storage<E: Engine, L: LockManager, F: KvFormat> {
     engine: E,
 
     sched: TxnScheduler<E, L>,
+    raw_sched: RawScheduler<F>,
 
     /// The thread pool used to run most read operations.
     read_pool: ReadPoolHandle,
@@ -184,6 +187,7 @@ impl<E: Engine, L: LockManager, F: KvFormat> Clone for Storage<E, L, F> {
         Self {
             engine: self.engine.clone(),
             sched: self.sched.clone(),
+            raw_sched: self.raw_sched.clone(),
             read_pool: self.read_pool.clone(),
             refs: self.refs.clone(),
             max_key_size: self.max_key_size,
@@ -258,11 +262,15 @@ impl<E: Engine, L: LockManager, F: KvFormat> Storage<E, L, F> {
             feature_gate,
         );
 
+        let worker_pool = sched.get_sched_pool(CommandPri::Normal).clone();
+        let raw_sched = RawScheduler::new(worker_pool);
+
         info!("Storage started.");
 
         Ok(Storage {
             engine,
             sched,
+            raw_sched,
             read_pool,
             concurrency_manager,
             refs: Arc::new(atomic::AtomicUsize::new(1)),
