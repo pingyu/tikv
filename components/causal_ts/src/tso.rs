@@ -23,7 +23,9 @@
 use std::{
     borrow::Borrow,
     collections::BTreeMap,
-    error, result,
+    error, fmt,
+    fmt::{Debug, Display, Formatter},
+    result,
     sync::{
         atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering},
         Arc,
@@ -35,7 +37,7 @@ use parking_lot::RwLock;
 use pd_client::PdClient;
 use tikv_util::{
     time::{Duration, Instant},
-    worker::{Builder as WorkerBuilder, Worker},
+    worker::{Builder as WorkerBuilder, Runnable, Scheduler, Worker},
 };
 use tokio::sync::{
     mpsc,
@@ -131,6 +133,40 @@ impl TsoBatch {
     }
 }
 
+enum Task {
+    RemoveBatch(u64),
+    LimitCapacity,
+    #[cfg(test)]
+    // Noop is used to verify that all tasks before are handled.
+    Noop(i32, Box<dyn FnOnce(i32) + Send>),
+}
+
+impl Display for Task {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match &*self {
+            Task::RemoveBatch(key) => write!(f, "remove batch, key:{}", key),
+            Task::LimitCapacity => write!(f, "limit capacity"),
+            #[cfg(test)]
+            Task::Noop(id, _) => write!(f, "noop, id:{}", id),
+        }
+    }
+}
+
+struct Runner(Arc<TsoBatchListInner>);
+
+impl Runnable for Runner {
+    type Task = Task;
+
+    fn run(&mut self, t: Task) {
+        match t {
+            Task::RemoveBatch(key) => self.0.remove_batch(key),
+            Task::LimitCapacity => self.0.limit_capacity(),
+            #[cfg(test)]
+            Task::Noop(id, cb) => cb(id),
+        }
+    }
+}
+
 /// `TsoBatchList` is a ordered list of `TsoBatch`. It aims to:
 ///
 /// 1. Cache more number of TSO to improve high availability. See issue #12794.
@@ -139,9 +175,67 @@ impl TsoBatch {
 /// 2. Fully utilize cached TSO when some regions require latest TSO (e.g. in
 /// the scenario of leader transfer). Other regions without the requirement can
 /// still use older TSO cache.
-#[derive(Default, Debug)]
-struct TsoBatchList {
-    inner: RwLock<TsoBatchListInner>,
+#[derive(Clone, Default)]
+pub struct TsoBatchList {
+    inner: Arc<TsoBatchListInner>,
+    worker: Option<Worker>,
+}
+
+impl Debug for TsoBatchList {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TsoBatchList")
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl TsoBatchList {
+    pub fn new(capacity: u32, use_async: bool) -> Self {
+        let mut inner = Arc::new(TsoBatchListInner::new(capacity));
+        let mut worker = None;
+        if use_async {
+            worker = Some(WorkerBuilder::new("batch_tso_list_worker").create());
+            let mut lazy_worker = worker
+                .as_ref()
+                .unwrap()
+                .lazy_build("batch_tso_list_lazy_worker");
+            Arc::get_mut(&mut inner)
+                .unwrap()
+                .set_scheduler(lazy_worker.scheduler());
+            assert!(lazy_worker.start(Runner(inner.clone())));
+        }
+
+        Self { inner, worker }
+    }
+
+    pub fn remain(&self) -> u32 {
+        self.inner.remain()
+    }
+
+    pub fn usage(&self) -> u32 {
+        self.inner.usage()
+    }
+
+    pub fn take_and_report_usage(&self) -> u32 {
+        self.inner.take_and_report_usage()
+    }
+
+    pub fn pop(&self, after_ts: Option<TimeStamp>) -> Option<TimeStamp> {
+        self.inner.pop(after_ts)
+    }
+
+    pub fn push(&self, batch_size: u32, last_ts: TimeStamp, need_flush: bool) -> Result<u64> {
+        self.inner.push(batch_size, last_ts, need_flush)
+    }
+
+    pub fn flush(&self) {
+        self.inner.flush()
+    }
+}
+
+#[derive(Default)]
+struct TsoBatchListInner {
+    map: RwLock<TsoBatchMap>,
 
     /// Number of remaining (available) TSO.
     /// Using signed integer for avoiding a wrap around huge value as it's not
@@ -154,6 +248,19 @@ struct TsoBatchList {
     /// Length of batch list. It is used to limit size for efficiency, and keep
     /// batches fresh.
     capacity: u32,
+
+    scheduler: Option<Scheduler<Task>>,
+}
+
+impl Debug for TsoBatchListInner {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TsoBatchListInner")
+            .field("map", &self.map)
+            .field("tso_remain", &self.tso_remain.load(Ordering::Relaxed))
+            .field("tso_usage", &self.tso_usage.load(Ordering::Relaxed))
+            .field("capacity", &self.capacity)
+            .finish()
+    }
 }
 
 /// Inner data structure of batch list.
@@ -165,14 +272,18 @@ struct TsoBatchList {
 ///
 /// 2. It is a scenario with much more reads than writes. The `RwLock` would not
 /// be less efficient than lock free implementation.
-type TsoBatchListInner = BTreeMap<u64, TsoBatch>;
+type TsoBatchMap = BTreeMap<u64, TsoBatch>;
 
-impl TsoBatchList {
+impl TsoBatchListInner {
     pub fn new(capacity: u32) -> Self {
         Self {
             capacity: std::cmp::min(capacity, MAX_TSO_BATCH_LIST_CAPACITY),
             ..Default::default()
         }
+    }
+
+    pub fn set_scheduler(&mut self, sched: Scheduler<Task>) {
+        self.scheduler = Some(sched)
     }
 
     pub fn remain(&self) -> u32 {
@@ -193,7 +304,7 @@ impl TsoBatchList {
 
     // TODO: make it async
     fn remove_batch(&self, key: u64) {
-        if let Some(batch) = self.inner.write().remove(&key) {
+        if let Some(batch) = self.map.write().remove(&key) {
             self.tso_remain
                 .fetch_sub(batch.remain() as i32, Ordering::Relaxed);
         }
@@ -206,7 +317,7 @@ impl TsoBatchList {
     /// should be larger than the store where it is transferred from).
     /// `after_ts` is included.
     pub fn pop(&self, after_ts: Option<TimeStamp>) -> Option<TimeStamp> {
-        let inner = self.inner.read();
+        let inner = self.map.read();
         let range = match after_ts {
             Some(after_ts) => inner.range(&after_ts.into_inner()..),
             None => inner.range(..),
@@ -218,8 +329,15 @@ impl TsoBatchList {
                 self.tso_usage.fetch_add(1, Ordering::Relaxed);
                 self.tso_remain.fetch_sub(1, Ordering::Relaxed);
                 if is_used_up {
-                    // TODO: make it async
-                    self.remove_batch(key);
+                    match self.scheduler {
+                        Some(ref sched) => {
+                            if let Err(e) = sched.schedule(Task::RemoveBatch(key)) {
+                                warn!("TsoBatchList schedule remove_batch task failed"; "error" => ?e);
+                            }
+                        }
+                        None => self.remove_batch(key),
+                    }
+                    // self.remove_batch(key);
                 }
                 return Some(ts);
             }
@@ -230,7 +348,7 @@ impl TsoBatchList {
     pub fn push(&self, batch_size: u32, last_ts: TimeStamp, need_flush: bool) -> Result<u64> {
         let new_batch = TsoBatch::new(batch_size, last_ts);
 
-        if let Some((_, last_batch)) = self.inner.read().iter().next_back() {
+        if let Some((_, last_batch)) = self.map.read().iter().next_back() {
             if new_batch.original_start() < last_batch.excluded_end() {
                 error!("timestamp fall back"; "batch_size" => batch_size, "last_ts" => ?last_ts,
                     "last_batch" => ?last_batch, "new_batch" => ?new_batch);
@@ -243,7 +361,7 @@ impl TsoBatchList {
             // Hold the write lock until new batch is inserted.
             // Otherwise a `pop()` would acquire the lock, meet no TSO available, and invoke
             // renew request.
-            let mut inner = self.inner.write();
+            let mut inner = self.map.write();
             if need_flush {
                 self.flush_internal(&mut inner);
             }
@@ -255,23 +373,33 @@ impl TsoBatchList {
 
         // remove items out of capacity limitation.
         // TODO: make it async
-        if self.inner.read().len() > self.capacity as usize {
-            if let Some((_, batch)) = self.inner.write().pop_first() {
-                self.tso_remain
-                    .fetch_sub(batch.remain() as i32, Ordering::Relaxed);
+        if let Some(ref sched) = self.scheduler {
+            if let Err(err) = sched.schedule(Task::LimitCapacity) {
+                warn!("schedule Task::LimitCapacity error"; "error" => ?err);
             }
+        } else {
+            self.limit_capacity();
         }
 
         Ok(key)
     }
 
-    fn flush_internal(&self, inner: &mut TsoBatchListInner) {
+    fn limit_capacity(&self) {
+        if self.map.read().len() > self.capacity as usize {
+            if let Some((_, batch)) = self.map.write().pop_first() {
+                self.tso_remain
+                    .fetch_sub(batch.remain() as i32, Ordering::Relaxed);
+            }
+        }
+    }
+
+    fn flush_internal(&self, inner: &mut TsoBatchMap) {
         inner.clear();
         self.tso_remain.store(0, Ordering::Relaxed);
     }
 
     pub fn flush(&self) {
-        let mut inner = self.inner.write();
+        let mut inner = self.map.write();
         self.flush_internal(&mut inner);
     }
 }
@@ -299,7 +427,7 @@ struct RenewParameter {
 
 pub struct BatchTsoProvider<C: PdClient> {
     pd_client: Arc<C>,
-    batch_list: Arc<TsoBatchList>,
+    batch_list: TsoBatchList,
     causal_ts_worker: Worker,
     renew_interval: Duration,
     renew_parameter: RenewParameter,
@@ -352,10 +480,11 @@ impl<C: PdClient + 'static> BatchTsoProvider<C> {
             cache_multiplier,
         };
         let (renew_request_tx, renew_request_rx) = mpsc::channel(MAX_RENEW_BATCH_SIZE);
+        let worker = WorkerBuilder::new("causal_ts_batch_tso_worker").create();
         let s = Self {
             pd_client: pd_client.clone(),
-            batch_list: Arc::new(TsoBatchList::new(cache_multiplier)),
-            causal_ts_worker: WorkerBuilder::new("causal_ts_batch_tso_worker").create(),
+            batch_list: TsoBatchList::new(cache_multiplier, false),
+            causal_ts_worker: worker,
             renew_interval,
             renew_parameter,
             renew_request_tx,
@@ -396,7 +525,7 @@ impl<C: PdClient + 'static> BatchTsoProvider<C> {
 
     async fn renew_tso_batch_impl(
         pd_client: Arc<C>,
-        tso_batch_list: Arc<TsoBatchList>,
+        tso_batch_list: TsoBatchList,
         renew_parameter: RenewParameter,
         need_flush: bool,
     ) -> Result<()> {
@@ -449,7 +578,7 @@ impl<C: PdClient + 'static> BatchTsoProvider<C> {
 
     async fn renew_thread(
         pd_client: Arc<C>,
-        tso_batch_list: Arc<TsoBatchList>,
+        tso_batch_list: TsoBatchList,
         renew_parameter: RenewParameter,
         mut rx: Receiver<RenewRequest>,
     ) {
@@ -496,7 +625,7 @@ impl<C: PdClient + 'static> BatchTsoProvider<C> {
     }
 
     fn calc_new_batch_size(
-        tso_batch_list: Arc<TsoBatchList>,
+        tso_batch_list: TsoBatchList,
         renew_parameter: RenewParameter,
         need_flush: bool,
     ) -> u32 {
@@ -683,12 +812,15 @@ pub mod tests {
         ];
 
         for (i, (remain, usage, need_flush, expected)) in cases.into_iter().enumerate() {
-            let batch_list = Arc::new(TsoBatchList {
-                inner: Default::default(),
-                tso_remain: AtomicI32::new(remain as i32),
-                tso_usage: AtomicU32::new(usage),
-                capacity: cache_multiplier,
-            });
+            let batch_list = TsoBatchList {
+                inner: Arc::new(TsoBatchListInner {
+                    tso_remain: AtomicI32::new(remain as i32),
+                    tso_usage: AtomicU32::new(usage),
+                    capacity: cache_multiplier,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
             let renew_parameter = RenewParameter {
                 batch_min_size: DEFAULT_TSO_BATCH_MIN_SIZE,
                 batch_max_size: DEFAULT_TSO_BATCH_MAX_SIZE,
@@ -705,7 +837,7 @@ pub mod tests {
 
     #[test]
     fn test_tso_batch_list_basic() {
-        let batch_list = TsoBatchList::new(10);
+        let batch_list = TsoBatchList::new(10, true);
 
         assert_eq!(batch_list.remain(), 0);
         assert_eq!(batch_list.usage(), 0);
@@ -782,7 +914,7 @@ pub mod tests {
 
     #[test]
     fn test_tso_batch_list_max_batch_count() {
-        let batch_list = TsoBatchList::new(3);
+        let batch_list = TsoBatchList::new(3, false);
 
         batch_list
             .push(10, TimeStamp::compose(1, 100), false)
@@ -806,7 +938,7 @@ pub mod tests {
 
     #[test]
     fn test_tso_batch_list_pop_after_ts() {
-        let batch_list = TsoBatchList::new(10);
+        let batch_list = TsoBatchList::new(10, false);
 
         batch_list
             .push(10, TimeStamp::compose(1, 100), false)
