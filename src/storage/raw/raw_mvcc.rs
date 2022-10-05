@@ -31,6 +31,8 @@ impl<S: Snapshot> RawMvccSnapshot<S> {
         iter_opt.set_vec_upper_bound(upper_bound, DATA_KEY_PREFIX_LEN);
         let mut iter = self.iter(cf, iter_opt)?;
         if iter.seek(key)? {
+            let (key, ts) = Key::split_on_ts_for(iter.key()).unwrap();
+            warn!("rawkv-trace raw_mvcc"; "key" => &log_wrappers::Value::key(key), "ts" => ?ts, "value" => &log_wrappers::Value::value(iter.value()));
             Ok(Some(iter.value().to_owned()))
         } else {
             Ok(None)

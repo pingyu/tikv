@@ -69,6 +69,12 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawCompareAndSwap {
         )?;
 
         let (pr, lock_guards) = if old_value == previous_value {
+            warn!("[rawkv-trace] cas succeed:true";
+                "old_value" => &log_wrappers::Value::value(old_value.as_ref().unwrap_or(&b"".to_vec())),
+                "value" => &log_wrappers::Value::value(&value),
+                "key" => &log_wrappers::Value::key(key.as_encoded()),
+                "ts" => ?raw_ext.as_ref().unwrap().ts);
+
             let raw_value = RawValue {
                 user_value: value,
                 expire_ts: ttl_to_expire_ts(self.ttl),
@@ -95,6 +101,12 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawCompareAndSwap {
                 raw_ext.into_iter().map(|r| r.key_guard).collect(),
             )
         } else {
+            warn!("[rawkv-trace] cas succeed:false";
+                "old_value" => &log_wrappers::Value::value(old_value.as_ref().unwrap_or(&b"".to_vec())),
+                "value" => &log_wrappers::Value::value(&value),
+                "key" => &log_wrappers::Value::key(key.as_encoded()),
+                "ts" => ?raw_ext.as_ref().unwrap().ts);
+
             (
                 ProcessResult::RawCompareAndSwapRes {
                     previous_value: old_value,

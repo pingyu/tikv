@@ -45,7 +45,12 @@ impl<S: Snapshot, L: LockManager> WriteCommand<S, L> for RawAtomicStore {
 
         if let Some(ref raw_ext) = raw_ext {
             for mutation in &mut mutations {
-                if let Modify::Put(_, ref mut key, _) = mutation {
+                if let Modify::Put(_, ref mut key, ref value) = mutation {
+                    warn!("[rawkv-trace] atomic_store";
+                        "value" => &log_wrappers::Value::value(value),
+                        "key" => &log_wrappers::Value::key(key.as_encoded()),
+                        "ts" => ?raw_ext.ts);
+
                     key.append_ts_inplace(raw_ext.ts);
                 }
             }
